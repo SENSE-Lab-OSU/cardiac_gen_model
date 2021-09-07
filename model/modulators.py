@@ -9,6 +9,7 @@ Created on Sat Sep  4 14:52:19 2021
 import os
 import sys
 import numpy as np
+import tensorflow as tf
 import matplotlib.pyplot as plt
 import pickle
 from math import gcd
@@ -20,6 +21,8 @@ sns.set()
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+tf.get_logger().setLevel('ERROR')
+tf.keras.backend.set_floatx('float32')
 
 proj_path=(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
 print(proj_path)

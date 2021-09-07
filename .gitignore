@@ -12,10 +12,10 @@
 .DS_Store
 
 # TensorFlow Checkpoint files
-checkpoint
-*.index
-*.data*
-*.v2
+#checkpoint
+#*.index
+#*.data*
+#*.v2
 
 #manual log files
 *.log
