@@ -1,5 +1,6 @@
 #Remove Data folder recursively for exclusions to apply
-data/*
+#data/*
+.ipynb_checkpoints
 
 #skip any README, .py or .gitkeep
 !*README*

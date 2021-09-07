@@ -1,0 +1,30 @@
+name: tf_gpu_5
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - cudatoolkit=10.1
+  - tensorflow-gpu=2.1
+  - tensorflow-probability
+  - tensorflow-estimator=2.1
+  - matplotlib
+  - requests>=2.12.4
+  - scipy>=1.2.0
+  - numpy=1.19.2
+  - joblib>=0.13.1
+  - pandas>=0.23.0
+  - networkx>=2.4
+  - scikit-learn>=0.20.2
+  - pydot
+  - python-graphviz
+  - pyspark
+  - pip
+  - pip:
+    - tensorflow-addons
+    - cerebralcortex-kernel>=3.3.10
+  - spyder
+  - seaborn
+  - astropy
+  - jupyterlab
+  - neurokit2<=0.1.0
+  - pywavelets
