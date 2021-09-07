@@ -24,9 +24,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 tf.get_logger().setLevel('ERROR')
 tf.keras.backend.set_floatx('float32')
 
-proj_path=(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
-print(proj_path)
-sys.path.append(proj_path)
+# proj_path=(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
+# print(proj_path)
+# sys.path.append(proj_path)
 
 from lib.simulator_for_CC import Simulator
 from HR2Rpeaks import HR2Rpeaks_Simulator
