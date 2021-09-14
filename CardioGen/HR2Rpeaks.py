@@ -10,7 +10,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 #from scipy import io
 #from pathlib import Path
-from lib.simulator_for_CC import Simulator
 import tensorflow as tf
 #import tensorflow_addons as tfa
 from tensorflow.keras import layers
@@ -19,18 +18,23 @@ import pandas as pd
 import scipy as sp
 #import mpld3
 #from lib.data import load_data_sense as load_data
-from lib.data import load_data_wesad as load_data
-
+from CardioGen.lib.data import load_data_wesad as load_data
+from CardioGen.lib.simulator_for_CC import Simulator
 #from lib.model_CondGAN import Net_CondGAN, Model_CondGAN
-from lib.model_CondWGAN import Model_CondWGAN, downsample, upsample
-from lib.utils import copy_any, start_logging, stop_logging, check_graph
-from lib.utils import get_leading_tacho, get_uniform_tacho
+from CardioGen.lib.model_CondWGAN import Model_CondWGAN, downsample, upsample
+from CardioGen.lib.utils import copy_any, start_logging, stop_logging, check_graph
+from CardioGen.lib.utils import get_leading_tacho, get_uniform_tacho
 
 import datetime
 import os
 import pickle
 import time
-
+import neurokit2 as nk
+import seaborn as sns
+sns.set()
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 tf.keras.backend.set_floatx('float32')
 proj_path='.'#(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
 def show_plot():
@@ -343,29 +347,43 @@ if __name__=='__main__':
     ##%%
     #Test Simulator
     #Use simulator to produce synthetic output given input
-    
-    #test_in,test_out_for_check=load_data.get_test_data(val_files[0],mode='HR2R',win_len_s=win_len_s
-    #                                         ,step_s=step_s,Fs_pks=100)
-    test_in,test_out_for_check=load_data.get_test_data(path+'S7',mode='HR2R',win_len_s=win_len_s
+    all_class_ids={f'S{k}':v for v,k in enumerate(list(range(2,12))+list(range(13,18)))}
+    #load_data.class_ids:
+    for class_name in ['S15']:
+    #for class_name in all_class_ids:
+        # load_data.class_ids={'S7':all_class_ids['S7']}
+        # test_in,test_out_for_check=load_data.get_test_data(path+'S7',mode='HR2R',win_len_s=win_len_s
+        #                                      ,step_s=step_s,Fs_pks=100)
+        # HR_S7=test_in[:,0]
+        
+        load_data.class_ids={class_name:all_class_ids[class_name]}
+        test_in,test_out_for_check=load_data.get_test_data(path+class_name,mode='HR2R',win_len_s=win_len_s
                                              ,step_s=step_s,Fs_pks=100)
+        
+        # lenth=min(len(HR_S7),len(test_in))
+        # test_in=test_in[:lenth]
+        # test_in[:,0]=HR_S7[:lenth]
     
-    #Fs_ppg=25;Fs_ecg=100
-    arr_pk,test_in=sim_HR2pks(test_in)#.reshape(-1,1))
+        
+        #Fs_ppg=25;Fs_ecg=100
+        arr_pk,test_in=sim_HR2pks(test_in)#.reshape(-1,1))
+        #plt.figure(100);plt.plot(test_in[:,0])
+        
+        # #Plot some stuff
+        # fig=plt.figure()  
+        # plt.plot(test_out_for_check[19:])
+        # plt.plot(arr_pk)
+        # plt.legend(['True','Synthetic'])
+        # #mpld3.display(fig)
+        # show_plot()
+        #HRV analysis
+        hrv_features = nk.hrv(test_out_for_check[19:], sampling_rate=Fs, show=True);show_plot()
+        plt.suptitle(class_name)
+        hrv_features_synth = nk.hrv(arr_pk, sampling_rate=Fs, show=True);show_plot()
+        plt.suptitle(class_name)
     
-    #Plot some stuff
-    fig=plt.figure()  
-    plt.plot(test_out_for_check[19:])
-    plt.plot(arr_pk)
-    plt.legend(['True','Synthetic'])
-    #mpld3.display(fig)
-    show_plot()
     
-    import neurokit2 as nk
-    import seaborn as sns
-    sns.set()
-    #HRV analysis
-    hrv_features = nk.hrv(test_out_for_check[19:], sampling_rate=Fs, show=True);show_plot()
-    hrv_features_synth = nk.hrv(arr_pk, sampling_rate=Fs, show=True);show_plot()
+    #plt.figure(100);plt.legend(['S3', 'S7', 'S10', 'S11', 'S15'])
     
     hrv_lomb = nk.hrv_frequency(test_out_for_check[19:], sampling_rate=100, show=True, psd_method="lomb");show_plot()
     hrv_lomb_synth = nk.hrv_frequency(arr_pk, sampling_rate=100, show=True, psd_method="lomb");show_plot()

@@ -14,7 +14,7 @@ from scipy import signal as sig
 
 #from scipy.signal import detrend
 #from pathlib import Path
-from lib.simulator_for_CC import Simulator
+from CardioGen.lib.simulator_for_CC import Simulator
 #from lib.model_stitchGAN import Model_stitchGAN, Net_stitchGAN
 import tensorflow as tf
 from tensorflow.keras import layers
@@ -23,10 +23,10 @@ import datetime
 #from scipy.stats import truncnorm
 #import pickle
 #from lib.model_CondGAN import Net_CondGAN, Model_CondGAN
-from lib.model_CondWGAN import Model_CondWGAN, downsample, upsample
-from lib.utils import copy_any, start_logging, stop_logging, check_graph
+from CardioGen.lib.model_CondWGAN import Model_CondWGAN, downsample, upsample
+from CardioGen.lib.utils import copy_any, start_logging, stop_logging, check_graph
 #from lib.data import load_data_sense as load_data
-from lib.data import load_data_wesad as load_data
+from CardioGen.lib.data import load_data_wesad as load_data
 n_classes=load_data.n_classes
 
 import os
@@ -486,11 +486,10 @@ if __name__=='__main__':
 
     #max_ppg_val=load_data.MAX_PPG_VAL
     #max_ecg_val=load_data.MAX_ECG_VAL
+    all_class_ids={f'S{k}':v for v,k in enumerate(list(range(2,12))+list(range(13,18)))}
 
-    for v,k in enumerate(list(range(11,12))+list(range(13,17))):
-        class_name=f'S{k}'
-        load_data.class_ids={class_name:v}
-
+    for class_name in list(all_class_ids.keys()):
+        load_data.class_ids={class_name:all_class_ids[class_name]}
         #Get Train Data for simulator
         plt.close('all')
         #path_prefix= 'E:/Box Sync/' #'C:/Users/agarwal.270/Box/' #        
@@ -521,9 +520,9 @@ if __name__=='__main__':
         del sim_pks2sigs
 #%%
     #Use simulator to produce synthetic output given input
-    all_class_ids={f'S{k}':v for v,k in enumerate(list(range(2,12))+list(range(13,18)))}
     #load_data.class_ids:
-    for class_name in ['S15']:
+    #for class_name in ['S15']:
+    for class_name in list(all_class_ids.keys()):
         load_data.class_ids={class_name:all_class_ids[class_name]}
         #Create Simulator using train data
         sim_pks2sigs=Rpeaks2EcgPpg_Simulator(input_list=[],output_list=[],P_ID=class_name,

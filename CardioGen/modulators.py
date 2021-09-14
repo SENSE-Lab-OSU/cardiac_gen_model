@@ -14,8 +14,6 @@ import matplotlib.pyplot as plt
 import pickle
 from math import gcd
 import neurokit2 as nk
-import glob
-import pandas as pd
 import seaborn as sns
 sns.set()
 import warnings
@@ -24,15 +22,11 @@ warnings.filterwarnings("ignore", category=UserWarning)
 tf.get_logger().setLevel('ERROR')
 tf.keras.backend.set_floatx('float32')
 
-# proj_path=(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
-# print(proj_path)
-# sys.path.append(proj_path)
-
-from lib.simulator_for_CC import Simulator
-from HR2Rpeaks import HR2Rpeaks_Simulator
-from Rpeaks2EcgPpg import Rpeaks2EcgPpg_Simulator
-from lib.utils import filtr_HR
-from lib.data import load_data_wesad as load_data
+from CardioGen.lib.simulator_for_CC import Simulator
+from CardioGen.HR2Rpeaks import HR2Rpeaks_Simulator
+from CardioGen.Rpeaks2EcgPpg import Rpeaks2EcgPpg_Simulator
+from CardioGen.lib.utils import filtr_HR
+from CardioGen.lib.data import load_data_wesad as load_data
 n_classes=load_data.n_classes
 
 #sys.path.append("../data/post-training/")
@@ -70,17 +64,20 @@ class ECG_HRV_Morph_Modulator(Simulator):
                                                 latent_size=latent_size_Morph)
 
         
-    def pre_process(self,ecg,Fs,win_len_s=8,step_s=2):
+    def pre_process(self,ecg,Fs_in,win_len_s=8,step_s=2):
         #Clean using neurokit2
-        ecg=nk.ecg_clean(ecg.flatten(),sampling_rate=Fs,method="neurokit")
+        ecg=nk.ecg_clean(ecg.flatten(),sampling_rate=Fs_in,method="neurokit")
 
-        Fs_ecg_new=self.Fs_pks
-        divisor=gcd(Fs,Fs_ecg_new)
-        up,down=int(Fs_ecg_new/divisor),int(Fs/divisor)
-        ecg_resamp=load_data.resample(ecg,Fs,up,down)
+        Fs_out=self.Fs_pks
+        if Fs_in!=Fs_out:
+            divisor=gcd(Fs_in,Fs_out)
+            up,down=int(Fs_out/divisor),int(Fs_in/divisor)
+            ecg_resamp=load_data.resample(ecg,Fs_in,up,down)
+        else:
+            ecg_resamp=ecg
         
         # find arr_pks
-        arr_pks, _=load_data.find_ecg_rpeaks(ecg_resamp,Fs_ecg_new)
+        arr_pks, _=load_data.find_ecg_rpeaks(ecg_resamp,Fs_out)
         HR_interpol,t_stamps=load_data.Rpeak2HR(arr_pks,win_len_s,step_s,
                                                 self.Fs_pks)
         arr_pks=arr_pks[t_stamps[0]:t_stamps[1]+1]
@@ -324,9 +321,9 @@ class ECG_HRV_Modulator(ECG_HRV_Morph_Modulator):
                                         Fs_out=self.Fs_out)
         
         return synth_ecg_out,[synth_ecg,arr_pks_ecg]
-#%%
+#%% Sample Client
 if __name__=='__main__':    
-    P_ID_in, P_ID_out='S3','S7'
+    P_ID_in, P_ID_out='S7','S15'
     
     #Get Data
     path='D:/Datasets/WESAD/'
@@ -335,34 +332,45 @@ if __name__=='__main__':
     with open(file_path, 'rb') as file:
         data = pickle.load(file, encoding='latin1')
         ecg_in = data['signal']['chest']['ECG'][-lenth:].astype(np.float32)
+        ecg_in=load_data.resample(ecg_in.reshape(-1,1),700,1,7)
     file_path=path+f'{P_ID_out}/{P_ID_out}.pkl'
     with open(file_path, 'rb') as file:
         data = pickle.load(file, encoding='latin1')
         ecg_out = data['signal']['chest']['ECG'][-lenth:].astype(np.float32)
-    
+        ecg_out=load_data.resample(ecg_out.reshape(-1,1),700,1,7)
+
+    ckpt_path='../data/post-training/'
+    Fs_in=100
     Fs_out=100 #Synthetic signal sampling freq
     
     # ECG HRV+Morph modulation
     hrv_morph_mod=ECG_HRV_Morph_Modulator(P_ID_out=P_ID_out,
-                                    path='../data/post-training/',
+                                    path=ckpt_path,
                                     Fs_out=Fs_out)
-    ecg_hrv_morph_mod,_=hrv_morph_mod(ecg_in,Fs=700)
+    # Produce synthetic from S15 to S15 itself to check performance of models
+    ecg_hrv_morph_mod_check,_=hrv_morph_mod(ecg_out,Fs=Fs_in)
+    # Produce synthetic from S7 to S15
+    ecg_hrv_morph_mod,_=hrv_morph_mod(ecg_in,Fs=Fs_in)
     
-    # Get Ground Truth properties
-    morph_features,hrv_features= hrv_morph_mod.analyse_signal(ecg_in.flatten()
-                                ,Fs=700,title_hrv=P_ID_in+'_in',
-                                title_morph=P_ID_in+'_in')
+    # Analyze HRV and Morphological properties
     morph_features,hrv_features= hrv_morph_mod.analyse_signal(ecg_out.flatten()
-                                ,Fs=700,title_hrv=P_ID_out+'_out',
+                                ,Fs=Fs_in,title_hrv=P_ID_out+'_out',
                                 title_morph=P_ID_out+'_out')
+    morph_features,hrv_features= hrv_morph_mod.analyse_signal(ecg_hrv_morph_mod_check
+                                ,Fs=Fs_out,title_hrv=P_ID_out+'_hrv_morph_synth_check',
+                                title_morph=P_ID_out+'_hrv_morph_synth_check')
+    
+    morph_features,hrv_features= hrv_morph_mod.analyse_signal(ecg_in.flatten()
+                                ,Fs=Fs_in,title_hrv=P_ID_in+'_in',
+                                title_morph=P_ID_in+'_in')
     morph_features,hrv_features= hrv_morph_mod.analyse_signal(ecg_hrv_morph_mod
                                 ,Fs=Fs_out,title_hrv=P_ID_out+'_hrv_morph_synth',
                                 title_morph=P_ID_out+'_hrv_morph_synth')
     
     # ECG Morph modulation
     morph_mod=ECG_Morph_Modulator(P_ID_out=P_ID_out,
-                                  path='../data/post-training/',Fs_out=Fs_out)
-    ecg_morph_mod,_=morph_mod(ecg_in,Fs=700)
+                                  path=ckpt_path,Fs_out=Fs_out)
+    ecg_morph_mod,_=morph_mod(ecg_in,Fs=Fs_in)
     
     morph_features,hrv_features= morph_mod.analyse_signal(ecg_morph_mod
                                 ,Fs=Fs_out,title_hrv=P_ID_in+'_morph_synth',
@@ -370,8 +378,8 @@ if __name__=='__main__':
     
     # ECG HRV modulation
     hrv_mod=ECG_HRV_Modulator(P_ID_in=P_ID_in,P_ID_out=P_ID_out,
-                                  path='../data/post-training/',Fs_out=Fs_out)
-    ecg_hrv_mod,_=hrv_mod(ecg_in,Fs=700)
+                                  path=ckpt_path,Fs_out=Fs_out)
+    ecg_hrv_mod,_=hrv_mod(ecg_in,Fs=Fs_in)
     
     morph_features,hrv_features= hrv_mod.analyse_signal(ecg_hrv_mod
                                 ,Fs=Fs_out,title_hrv=P_ID_out+'_hrv_synth',
