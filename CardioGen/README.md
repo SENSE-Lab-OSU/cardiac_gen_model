@@ -1,1 +1,1 @@
-Contains the main model, supporting library of functions in a directory "lib" and logs in a directory "logs".
+Contains the main model & supporting library of functions in the directory "lib".

@@ -1,5 +1,5 @@
 #Remove Data folder recursively for exclusions to apply
-#data/*
+data/pre-training/*
 .ipynb_checkpoints
 
 #skip any README, .py or .gitkeep

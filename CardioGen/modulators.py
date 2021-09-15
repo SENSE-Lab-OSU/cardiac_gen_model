@@ -326,7 +326,7 @@ if __name__=='__main__':
     P_ID_in, P_ID_out='S7','S15'
     
     #Get Data
-    path='D:/Datasets/WESAD/'
+    path='../data/pre-training/WESAD/'
     file_path=path+f'{P_ID_in}/{P_ID_in}.pkl'
     lenth=700000
     with open(file_path, 'rb') as file:
