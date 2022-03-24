@@ -24,7 +24,7 @@ tf.keras.backend.set_floatx('float32')
 
 from CardioGen.lib.simulator_for_CC import Simulator
 from CardioGen.HR2Rpeaks import HR2Rpeaks_Simulator
-from CardioGen.Rpeaks2EcgPpg import Rpeaks2EcgPpg_Simulator
+from CardioGen.Rpeaks2Sig import Rpeaks2Sig_Simulator
 from CardioGen.lib.utils import filtr_HR
 from CardioGen.lib.data import load_data_wesad as load_data
 n_classes=load_data.n_classes
@@ -60,7 +60,7 @@ class ECG_HRV_Morph_Modulator(Simulator):
                         P_ID='W',Fs_HR=Fs_HR,latent_size=latent_size_HRV)
         
         #Create Simulator using train data
-        self.sim_pks2sigs=Rpeaks2EcgPpg_Simulator(P_ID=P_ID_out,path=path,
+        self.sim_pks2sigs=Rpeaks2Sig_Simulator(P_ID=P_ID_out,path=path,
                                                 latent_size=latent_size_Morph)
 
         
@@ -246,7 +246,7 @@ class ECG_Morph_Modulator(ECG_HRV_Morph_Modulator):
             
         
         #Create Simulator using train data
-        self.sim_pks2sigs=Rpeaks2EcgPpg_Simulator(P_ID=P_ID_out,path=path,
+        self.sim_pks2sigs=Rpeaks2Sig_Simulator(P_ID=P_ID_out,path=path,
                                                 latent_size=latent_size_Morph)
     def __call__(self,ecg,Fs):
         
@@ -291,7 +291,7 @@ class ECG_HRV_Modulator(ECG_HRV_Morph_Modulator):
                         P_ID='W',Fs_HR=Fs_HR,latent_size=latent_size_HRV)
         
         # Rpks2Ecg_user1
-        self.sim_pks2sigs=Rpeaks2EcgPpg_Simulator(P_ID=P_ID_in,path=path,
+        self.sim_pks2sigs=Rpeaks2Sig_Simulator(P_ID=P_ID_in,path=path,
                                                 latent_size=latent_size_Morph)
         return
     

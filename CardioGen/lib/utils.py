@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import sys
 import os
 import shutil, errno
+import glob
 from tensorflow.keras import Model, layers
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 import scipy.signal as sig
@@ -150,6 +151,29 @@ def copy_any(src, dst):
         else: raise
     return
 
+def copy_R2Smodel_weights(proj_path,exp_no):
+    ver=exp_no[:2]
+    P_ID_list=[f'S{i}' for i in list(range(2,12))+list(range(13,18))]
+    sig_id_list=['ecg','ppg']
+    for P_ID in P_ID_list:
+        for sig_id in sig_id_list:
+            src=(proj_path+
+                 f'/experiments/condWGAN/{exp_no}/{P_ID}_{sig_id}_R2S/checkpoints/')
+            dst=(proj_path+
+                 f'/data/post-training/model_weights_v{ver}/{P_ID}_{sig_id}_Morph_model')
+            
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            os.makedirs(dst)
+            
+            # Copy user desired exp_no and ckpt_no files to destination
+            with open(src+'checkpoint','r') as file:
+                ckpt_no = file.readline().rstrip().split(' ')[1][1:-1]
+            files2copy=[src+'checkpoint']+list(glob.glob(src+ckpt_no+'*'))
+            for file in files2copy: shutil.copy(file,dst)
+    #copy_R2Smodel_weights('..','12_27_20220217-014313')
+    return
+
 def filtr_HR(X0,Fs=100,filt=True,cutoff=0.5):
     nyq=Fs/2
     assert cutoff+0.5<nyq,'cutoff+0.5 should be less than nyquist'
@@ -168,15 +192,20 @@ def filtr_HR(X0,Fs=100,filt=True,cutoff=0.5):
     #X=sig.detrend(X,type='constant',axis=0); # subtracted mean again to center around x=0 just in case things changed during filtering
     return X
 
-def get_uniform_tacho(nn, fs=4):
+def get_uniform_tacho(nn, fs=4, t_bias=0):
     '''
     Resampling (with 4Hz) and interpolate because RRi are unevenly space
     nn in [s]
     ''' 
-    t=np.cumsum(nn)
+    t=np.cumsum(nn)+t_bias
     #t-=t[0] #TODO: This line seemed wrong based on tacho deh if time matters
     f_interpol = sp.interpolate.interp1d(t, nn,'cubic',axis=0)
-    t_interpol = np.arange(t[0], t[-1], 1./fs)
+    
+    t_start,t_end=np.ceil(t[0]),np.floor(t[-1]) #helps get integers on uniform grid
+    t_interpol = np.arange(t_start,t_end, 1/fs)
+    #Had to add explicit clipping due to floating point errors here.
+    #t_interpol[-1]=min(t[-1],t_interpol[-1])
+    #t_interpol[0]=max(t[0],t_interpol[0])
     nn_interpol = f_interpol(t_interpol)
     return t_interpol,nn_interpol
 
@@ -194,4 +223,20 @@ def get_leading_tacho(nn, fs=4):
     t_interpol = np.arange(t[0], t[-1], 1./fs)
     nn_interpol = f_interpol(t_interpol)
     return t_interpol,nn_interpol
+
+
+def get_continous_wins(sel_mask):
+    # Get all sets of consecutive windows
+    diff_arr=np.concatenate([[0],np.diff(sel_mask)])
+    start_idxs=np.arange(len(sel_mask))[diff_arr==1]
+    end_idxs=np.arange(len(sel_mask))[diff_arr==-1]
+    #correct for terminal idxs
+    if sel_mask[0]==1: start_idxs=np.concatenate([[0],start_idxs])
+    if sel_mask[-1]==1: end_idxs=np.concatenate([end_idxs,[len(sel_mask)]])
+    assert len(start_idxs)==len(end_idxs), "no. of start and end indices aren't equal"
+    # # Check figure for idx detection
+    # plt.figure();plt.plot(sel_mask)
+    # plt.plot(start_idxs,sel_mask[start_idxs],'go')
+    # plt.plot(end_idxs-1,sel_mask[end_idxs-1],'r+')
+    return start_idxs,end_idxs
     

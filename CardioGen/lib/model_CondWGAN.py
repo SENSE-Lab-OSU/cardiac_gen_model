@@ -19,51 +19,14 @@ from tensorflow.keras import layers
 from .utils import find_batch_size, make_data_pipe
 #from .networks_GAN import get_GAN_layers_default as get_GAN_layers
 from .networks_GAN import get_GAN_layers_conv as get_GAN_layers
+from .networks_GAN import downsample, upsample
 
 tf.keras.backend.set_floatx('float32')
 tf_dtype=tf.float32
 
 #%% Default GAN layers
 
-#%%
-class downsample(tf.keras.layers.Layer):
-    def __init__(self,filters, kernel_size, strides,activation=None, apply_batchnorm=True):
-        super(downsample, self).__init__()
-        initializer = tf.random_normal_initializer(0., 0.02)
-        self.layer_list=[layers.Conv2D(filters=filters, kernel_size=kernel_size, 
-                        strides=strides,activation=activation,padding='same',
-                        kernel_initializer=initializer)]
-        
-        if apply_batchnorm:
-            self.layer_list.append(layers.BatchNormalization())
-        self.layer_list.append(layers.LeakyReLU())
-        
-    def call(self,x,training=None):
-        for lay in self.layer_list:
-            x=lay(x,training=training)
-            #print(x.shape.as_list())
-        return x
-    
-class upsample(tf.keras.layers.Layer):
-    def __init__(self,filters, kernel_size, strides,activation=None, 
-                 apply_batchnorm=True, apply_dropout=False):
-        super(upsample, self).__init__()
-        initializer = tf.random_normal_initializer(0., 0.02)
-        self.layer_list=[layers.Conv2DTranspose(filters=filters, kernel_size=kernel_size, 
-                        strides=strides,activation=activation,padding='same',
-                        kernel_initializer=initializer)]
-        
-        if apply_batchnorm:
-            self.layer_list.append(layers.BatchNormalization())
-        if apply_dropout:
-            self.layer_list.append(layers.Dropout(0.25))
-        self.layer_list.append(layers.ReLU())
-        
-    def call(self,x,training=None):
-        for lay in self.layer_list:
-            x=lay(x,training=training)
-            #print(x.shape.as_list())
-        return x
+
 
 
 
@@ -128,11 +91,14 @@ class Discriminator(tf.keras.layers.Layer):
             x=y
         
         out_list=[]
+        #TODO: Inserted dummy dimension after using downsample layers
+        #x = tf.expand_dims(x, axis=1) #insert a dummy dim to use conv2d
         for lay in self.layer_list:
             x=lay(x,training=training)
             out_list.append(x)
             #print(x.shape.as_list())
-            
+        #x = tf.squeeze(x, axis=1) #remove the dummy dim 
+        
         if return_all_out:
             return x, out_list.pop()
         else:
@@ -179,7 +145,7 @@ class Discriminator(tf.keras.layers.Layer):
     
 class Generator_pix2pix(Generator):
     def __init__(self,layer_list,optimizer,latent_size,z_up_factor=8,
-                 use_x=True,n_classes=0):
+                 use_x=True,n_classes=0,Unet_reps=4):
         super(Generator, self).__init__()
         self.layer_list=layer_list
         self.class_layer_list=[upsample(filters=1,kernel_size=(1,3),
@@ -189,6 +155,7 @@ class Generator_pix2pix(Generator):
         self.z_up_layer_list=[upsample(filters=latent_size,kernel_size=(1,3),
                     strides=(1,2)) for _ in range(int(np.log2(z_up_factor)))]
         self.use_x=use_x
+        self.Unet_reps=Unet_reps
         
         
         if optimizer is not None:
@@ -197,7 +164,8 @@ class Generator_pix2pix(Generator):
             self.optimizer=tf.keras.optimizers.Adam(1e-4)
         self.bc=tf.keras.losses.BinaryCrossentropy(from_logits=True)
         
-    def Unet(self,input_list,training):
+    def Unet(self,input_list,training,rnn_state_out_no,
+             update_rnn_state_out=True):
         x,rnn_state_in=input_list
         # Downsampling
         skips=[]
@@ -218,18 +186,20 @@ class Generator_pix2pix(Generator):
         x = tf.squeeze(x, axis=1) #remove the dummy dim
         
         x=self.layer_list[-2](x,training=training,initial_state=rnn_state_in)
-        self.rnn_state_out=x[:,-1,:]
+        if update_rnn_state_out: self.rnn_state_out=x[:,rnn_state_out_no,:]
+        #self.rnn_state_out=x[:,-1,:]
+        rnn_state_out_internal=x[:,-1,:]
         x=self.layer_list[-1](x,training=training)
-        return x,self.rnn_state_out
+        return x,rnn_state_out_internal
         
-    def call(self,input_list,training=None,reps=2,rnn_state=None):
+    def call(self,input_list,training=None,rnn_state=None,rnn_state_out_no=-1):
         z,x=input_list
         
-        #Transform z to create correlated samples
-        z = tf.expand_dims(z, axis=1) #insert a dummy dim to use conv2d
-        for lay in self.z_up_layer_list:
-            z=lay(z,training=training)
-        z = tf.squeeze(z, axis=1) #remove the dummy dim
+        # #Transform z to create correlated samples
+        # z = tf.expand_dims(z, axis=1) #insert a dummy dim to use conv2d
+        # for lay in self.z_up_layer_list:
+        #     z=lay(z,training=training)
+        # z = tf.squeeze(z, axis=1) #remove the dummy dim
         
         #Append condition
         if self.use_x:
@@ -243,19 +213,28 @@ class Generator_pix2pix(Generator):
         if self.n_classes is not None:
             assert in_shape_Unet[-1]>=self.n_classes,('input condition shape'
                                                 'must be >= no. of classes')
-        in_shape_Unet[0]=reps*1
-        in_shape_Unet[2]=int(in_shape_Unet[2]/reps)
-        #in_shape_Unet = (in_shape[1int(in_shape[2]/reps),in_shape[3])
+        in_shape_Unet[0]=self.Unet_reps*1
+        in_shape_Unet[2]=int(in_shape_Unet[2]/self.Unet_reps)
+        if rnn_state_out_no!=-1:
+            assert rnn_state_out_no>=0, 'rnn_state_out_no must be non-negative or -1'
+            update_rnn_idx=int(rnn_state_out_no/in_shape_Unet[2])
+            rnn_state_out_no%=in_shape_Unet[2]
+        else:
+            update_rnn_idx=self.Unet_reps-1
+            
+        #in_shape_Unet = (in_shape[1int(in_shape[2]/self.Unet_reps),in_shape[3])
 
         inputs = layers.Reshape(in_shape_Unet)(x) #Check if reshaping in desired fashion
         #tf.zeros([tf.shape(inputs)[0],8])
         out_list=[]
-        for i in range(reps):
-            Unet_out,rnn_state=self.Unet([inputs[:,i,:,:,:],rnn_state],training=training)
+        for i in range(self.Unet_reps):
+            Unet_out,rnn_state=self.Unet([inputs[:,i,:,:,:],rnn_state],
+                        training=training,rnn_state_out_no=rnn_state_out_no,
+                        update_rnn_state_out=(i==update_rnn_idx))
             out_list.append(Unet_out)
         #dec_mem = z[:,-mem_shape[0]:]
         out = tf.stack(out_list,axis=1)
-        out = layers.Reshape((int(in_shape_Unet[2]*reps),-1))(out)#Check if reshaping in desired fashion
+        out = layers.Reshape((int(in_shape_Unet[2]*self.Unet_reps),-1))(out)#Check if reshaping in desired fashion
         return out
 
 class Generator_pix2pix_mod(Generator_pix2pix):
@@ -297,7 +276,8 @@ class Model_CondWGAN(tf.keras.Model):
     def __init__(self,model_path,gen_layers=None,disc_layers=None,
                  save_flag=True,optimizers=None,aux_losses=None,
                  aux_losses_weights=None,in_shape=None,out_shape=None,
-                 latent_size=10,mode='GAN',use_x=True, T_steps=5, n_classes=1):
+                 latent_size=10,mode='GAN',use_x=True, T_steps=5, n_classes=1,
+                 feat_loss_weight=0,Unet_reps=2):
         '''
             Setting all the variables for our model.
         '''
@@ -307,7 +287,7 @@ class Model_CondWGAN(tf.keras.Model):
         self.mode=mode
         self.latent_size=latent_size
         self.use_x=use_x
-        self.z_up_factor=8
+        self.z_up_factor=1
 
         
         self.n_dims_x=None
@@ -334,7 +314,8 @@ class Model_CondWGAN(tf.keras.Model):
             
         self.gen_layers=gen_layers
         self.gen=Generator_pix2pix(self.gen_layers,self.optimizers[0],
-                                   latent_size,self.z_up_factor,use_x=use_x)#,
+                                   latent_size,self.z_up_factor,use_x=use_x,
+                                   Unet_reps=Unet_reps)#,
                                    #n_classes=n_classes)
         #self.gen=Generator(self.gen_layers,self.optimizers[0],use_x=use_x)
 
@@ -350,7 +331,7 @@ class Model_CondWGAN(tf.keras.Model):
         if ((aux_losses is not None) and (aux_losses_weights is None)):
             aux_losses_weights=len(aux_losses)*[1]
         self.aux_losses_weights=aux_losses_weights
-        self.feat_loss_weight=5e-3
+        self.feat_loss_weight=feat_loss_weight#5e-4 #TODO: check this
         self.grad_penalty_weight = 10
         
         #'Stateful' Metrics
@@ -577,13 +558,15 @@ class Model_CondWGAN(tf.keras.Model):
         #self.test_metric(x, predictions)
         return
     
-    def test_step(self,data, in_prediction=False, rnn_state=None):
+    def test_step(self,data, in_prediction=False, rnn_state=None, 
+                  rnn_state_out_no=-1):
         '''
             x is either a condition or just a batch size indicator
         '''
         x,y=data
         z=self.sample_z_like(x)
-        y_hat = self.gen([z,x], training=False, rnn_state=rnn_state)
+        y_hat = self.gen([z,x], training=False, rnn_state=rnn_state,
+                         rnn_state_out_no=rnn_state_out_no)
         if  in_prediction:
             return y_hat
         fake_logits = self.disc([y_hat,x], training=False)
@@ -739,7 +722,7 @@ class Model_CondWGAN(tf.keras.Model):
         self.manager.save(checkpoint_number=int(self.ckpt.step))
     
     
-    def predict(self,test_data,rnn_state=None):
+    def predict(self,test_data,rnn_state=None,rnn_state_out_no=-1):
         if self.mode=='GAN_recon':
             test_step=self.test_step_recon
         else:
@@ -757,7 +740,8 @@ class Model_CondWGAN(tf.keras.Model):
             # Reset the metrics for the next batch and test z values
             y_hat=test_step([test_data[0][i:i+batch_size_test],
                             test_data[0][i:i+batch_size_test]] #Dummy y to test_step
-                            ,in_prediction=True,rnn_state=rnn_state)
+                            ,in_prediction=True,rnn_state=rnn_state,
+                            rnn_state_out_no=rnn_state_out_no)
             test_y_hat_list.append(y_hat)
 
         #test_data.append(np.concatenate(test_y_hat_list,axis=0))

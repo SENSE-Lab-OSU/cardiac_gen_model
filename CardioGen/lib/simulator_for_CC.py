@@ -43,6 +43,26 @@ class Simulator(object):
             return slid_tseries[0]
         else:
             return slid_tseries
+
+    def sliding_window_defragmentation(self,tseries,win_size,step_size): 
+        '''
+        sliding_window_defragmentation
+        for eg.:
+        tseries=list of (numpy array of shape [n_wins,n_tsteps,vector_dim_at_every_tstep])
+        '''
+        assert type(tseries)==type([]), 'Input time-series should be a list of numpy arrays'
+        assert win_size==tseries[0].shape[1], 'Incorrect window size of input tseries'
+        defrag_tseries=[]
+        for j in range(len(tseries)):
+            if len(tseries[j].shape)==2: tseries[j]=np.expand_dim(tseries[j],-1)
+            defrag_tseries.append(np.concatenate([tseries[j][0,...],
+            tseries[j][1:,-step_size:,...].reshape([-1,*tseries[j].shape[2:]])],
+            axis=0))
+        
+        if len(defrag_tseries)==1:
+            return defrag_tseries[0]
+        else:
+            return defrag_tseries
     
     # Common helper functions in simulators
     def get_windows_at_peaks(self,pk_locs,y,w_pk=25,w_l=10,make_plots=False):
