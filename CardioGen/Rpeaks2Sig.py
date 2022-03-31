@@ -71,7 +71,8 @@ class Rpeaks2Sig_Simulator(Simulator):
                  path='./',sig_id='ppg_green',latent_size=6,logging=False,
                  epochs=2,batch_size=16,aux_loss_weights=[1],RNN_win_len=8,
                  win_step_size=2,current_time=None,exp_id=f'{ver}_1',
-                 gen_model_config={'rnn_units':8,'disc_f_list':[8,16,32,32,64]}
+                 gen_model_config={'rnn_units':8,'disc_f_list':[8,16,16,32,64],
+                                   'gru_drop':0.}
                  ):
         '''
         in/output format: list of numpy arrays. 1st channel of output is 
@@ -359,69 +360,67 @@ if __name__=='__main__':
     ecg_gen_model_config={'rnn_units':8,'disc_f_list':[8,16,16,32,64],
                           'gru_drop':0.}
     
-    #load_data.class_ids={'S7':all_class_ids['S7']}
-    #TODO: Uncomment and indent loop for subject-specific models
-    #for class_name in ['S5']:
-    for class_name in list(all_class_ids.keys()):
-        load_data.class_ids={class_name:all_class_ids[class_name]}
-        
-        #Get Train Data for simulator
-        plt.close('all')
-        #path_prefix= 'E:/Box Sync/' #'C:/Users/agarwal.270/Box/' #        
-        # train_data_filename='processed_RC2EP_Kalidas_train_data.pkl'
-        # if not os.path.isfile(path+train_data_filename):
-        #     input_list,output_list,musig_dict=load_data.get_train_data(path,mode='R2S')
-        #     with open(path+train_data_filename, 'wb') as fp:
-        #         pickle.dump([input_list,output_list,musig_dict], fp)
-                
-        # with open (path+train_data_filename, 'rb') as fp:
-        #     itemlist = pickle.load(fp)
-        # input_list,output_list,musig_dict=itemlist
-        
-        filename = (f'{proj_path}/../data/pre-training/WESAD_musig_Dsplit_w{win_len_s}s{step_s}b{bsize}.'
-                    'pickle')
-        if os.path.isfile(filename):
-            with open (filename, 'rb') as fp:
-                _,Dsplit_mask_dict = pickle.load(fp)
-            input_dict,output_dict,musig_dict,Dsplit_mask_dict=(load_data.
-                    get_train_data(path,mode='R2S',win_len_s=win_len_s,
-                    step_s=step_s,Dsplit_mask_dict=Dsplit_mask_dict))
-        else:
-            input_dict,output_dict,musig_dict,Dsplit_mask_dict=(load_data.
-                    get_train_data(path,mode='R2S',win_len_s=win_len_s,
-                    step_s=step_s,Dsplit_mask_dict=None))
-            #Save Dsplit_masks
-            with open(filename, 'wb') as handle:
-                pickle.dump([musig_dict,Dsplit_mask_dict], handle)
-        
-        #See ECG
-        #aa=output_list[0][:,0:1].reshape(-1)
-        #plt.figure();plt.plot(aa)
-        
-        #Create Simulator using train data
-        ckpt_path=proj_path+'/../data/post-training/'
+    #TODO: Uncomment and indent next 2 lines for subject-specific models
+    #for class_name in list(all_class_ids.keys()):
+    #load_data.class_ids={class_name:all_class_ids[class_name]}
     
-        sim_pks2ppg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ppg_new,
-                    Fs_out=load_data.Fs_ppg_new,input_list=input_dict['ppg'],
-                    output_list=output_dict['ppg'],
-                    Dsplit_mask_list=[Dsplit_mask_dict['ppg'][c] 
-                            for c in Dsplit_mask_dict['Dspecs']['key_order']],
-                    P_ID=class_name,path=ckpt_path,sig_id='ppg',
-                    latent_size=latent_size,logging=True,epochs=500,batch_size=32,
-                    aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
-                    current_time=curr_time,exp_id=f'{ver}_{exp_no}',
-                    gen_model_config=ppg_gen_model_config)
-        sim_pks2ecg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ecg_new,
-                    Fs_out=load_data.Fs_ecg_new,input_list=input_dict['ecg'],
-                    output_list=output_dict['ecg'],
-                    Dsplit_mask_list=[Dsplit_mask_dict['ecg'][c] 
-                            for c in Dsplit_mask_dict['Dspecs']['key_order']],
-                    P_ID=class_name,path=ckpt_path,sig_id='ecg',
-                    latent_size=latent_size,logging=True,epochs=500,batch_size=32,
-                    aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
-                    current_time=sim_pks2ppg.current_time,
-                    exp_id=sim_pks2ppg.exp_id,gen_model_config=ecg_gen_model_config)
-        del sim_pks2ppg,sim_pks2ecg
+    #Get Train Data for simulator
+    plt.close('all')
+    #path_prefix= 'E:/Box Sync/' #'C:/Users/agarwal.270/Box/' #        
+    # train_data_filename='processed_RC2EP_Kalidas_train_data.pkl'
+    # if not os.path.isfile(path+train_data_filename):
+    #     input_list,output_list,musig_dict=load_data.get_train_data(path,mode='R2S')
+    #     with open(path+train_data_filename, 'wb') as fp:
+    #         pickle.dump([input_list,output_list,musig_dict], fp)
+            
+    # with open (path+train_data_filename, 'rb') as fp:
+    #     itemlist = pickle.load(fp)
+    # input_list,output_list,musig_dict=itemlist
+    
+    filename = (f'{proj_path}/../data/pre-training/WESAD_musig_Dsplit_w{win_len_s}s{step_s}b{bsize}.'
+                'pickle')
+    if os.path.isfile(filename):
+        with open (filename, 'rb') as fp:
+            _,Dsplit_mask_dict = pickle.load(fp)
+        input_dict,output_dict,musig_dict,Dsplit_mask_dict=(load_data.
+                get_train_data(path,mode='R2S',win_len_s=win_len_s,
+                step_s=step_s,Dsplit_mask_dict=Dsplit_mask_dict))
+    else:
+        input_dict,output_dict,musig_dict,Dsplit_mask_dict=(load_data.
+                get_train_data(path,mode='R2S',win_len_s=win_len_s,
+                step_s=step_s,Dsplit_mask_dict=None))
+        #Save Dsplit_masks
+        with open(filename, 'wb') as handle:
+            pickle.dump([musig_dict,Dsplit_mask_dict], handle)
+    
+    #See ECG
+    #aa=output_list[0][:,0:1].reshape(-1)
+    #plt.figure();plt.plot(aa)
+    
+    #Create Simulator using train data
+    ckpt_path=proj_path+'/../data/post-training/'
+
+    sim_pks2ppg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ppg_new,
+                Fs_out=load_data.Fs_ppg_new,input_list=input_dict['ppg'],
+                output_list=output_dict['ppg'],
+                Dsplit_mask_list=[Dsplit_mask_dict['ppg'][c] 
+                        for c in Dsplit_mask_dict['Dspecs']['key_order']],
+                P_ID=class_name,path=ckpt_path,sig_id='ppg',
+                latent_size=latent_size,logging=True,epochs=500,batch_size=32,
+                aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
+                current_time=curr_time,exp_id=f'{ver}_{exp_no}',
+                gen_model_config=ppg_gen_model_config)
+    sim_pks2ecg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ecg_new,
+                Fs_out=load_data.Fs_ecg_new,input_list=input_dict['ecg'],
+                output_list=output_dict['ecg'],
+                Dsplit_mask_list=[Dsplit_mask_dict['ecg'][c] 
+                        for c in Dsplit_mask_dict['Dspecs']['key_order']],
+                P_ID=class_name,path=ckpt_path,sig_id='ecg',
+                latent_size=latent_size,logging=True,epochs=500,batch_size=32,
+                aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
+                current_time=sim_pks2ppg.current_time,
+                exp_id=sim_pks2ppg.exp_id,gen_model_config=ecg_gen_model_config)
+    del sim_pks2ppg,sim_pks2ecg
 #%% Inference
     filename = (f'{proj_path}/../data/pre-training/WESAD_musig_Dsplit_w{win_len_s}s{step_s}b{bsize}.'
                 'pickle')

@@ -7,6 +7,7 @@ data/pre-training/*
 !.gitkeep
 !*.py
 !*.sh
+!*Dsplit*
 
 # Temporary OS files
 .DS_Store
