@@ -19,6 +19,7 @@ import copy
 import tensorflow as tf
 from tensorflow.keras import layers
 import datetime
+#from Rpeaks2EcgPpg_gen_model_v2 import NLL_loss, mse_metric
 #from scipy.stats import truncnorm
 #import pickle
 
@@ -42,7 +43,7 @@ else:
     from .lib.data import load_data_wesad as load_data
 
 n_classes=load_data.n_classes
-
+n_stresses=load_data.n_stresses
 import os
 import sys
 import pickle
@@ -62,6 +63,7 @@ def show_plot():
 ver=12 #version of the model_weights to use. Refer to README for details.
 
 #%%
+#del Rpeaks2EcgPpg_Simulator
 class Rpeaks2Sig_Simulator(Simulator):
     '''
     find peak_train. from there on, more or less ppg ecg
@@ -71,8 +73,7 @@ class Rpeaks2Sig_Simulator(Simulator):
                  path='./',sig_id='ppg_green',latent_size=6,logging=False,
                  epochs=2,batch_size=16,aux_loss_weights=[1],RNN_win_len=8,
                  win_step_size=2,current_time=None,exp_id=f'{ver}_1',
-                 gen_model_config={'rnn_units':8,'disc_f_list':[8,16,16,32,64],
-                                   'gru_drop':0.}
+                 gen_model_config={'rnn_units':8,'disc_f_list':[8,16,32,32,64]}
                  ):
         '''
         in/output format: list of numpy arrays. 1st channel of output is 
@@ -150,7 +151,7 @@ class Rpeaks2Sig_Simulator(Simulator):
                                  ),
                         upsample(filters=8,kernel_size=(1,3),strides=(1,2)),
                         layers.GRU(self.gen_model_config['rnn_units'],
-                                   return_sequences=True,stateful=stateful, 
+                                   return_sequences=True,stateful=False, 
                                    dropout=self.gen_model_config['gru_drop']),
                         layers.Conv1D(1,1,padding='same')]
         
@@ -180,7 +181,8 @@ class Rpeaks2Sig_Simulator(Simulator):
                        optimizers=optimizers,save_flag=save_flag,
                        aux_losses=[tf.keras.losses.MeanSquaredError()],
                        aux_losses_weights=aux_losses_weights,
-                       n_classes=n_classes,Unet_reps=2)
+                       n_classes=n_classes,Unet_reps=2,
+                       z_up_factor=self.gen_model_config['z_up_factor'])
         #model.summary()
         return model
     
@@ -222,9 +224,17 @@ class Rpeaks2Sig_Simulator(Simulator):
                       np.concatenate(val_out_list,axis=0)]
             train_data=[np.concatenate(train_in_list,axis=0),
                       np.concatenate(train_out_list,axis=0)]
-
+            
+            #TODO: See if P_ID indicates subject specific models. Didn't see any point of it
+            if self.P_ID in list(all_class_ids.keys()):
+                class_no=all_class_ids[self.P_ID]
+                subject_train_mask=train_data[0][:,0,1+class_no].astype(bool)
+                train_data=[train_data[0][subject_train_mask],
+                            train_data[1][subject_train_mask]]
+            
             print(val_data[0].shape,val_data[1].shape,
                   train_data[0].shape,train_data[1].shape)
+            
             
             return train_data,val_data
         
@@ -343,11 +353,11 @@ class Rpeaks2Sig_Simulator(Simulator):
 if __name__=='__main__':
     # Data Helpers
     import seaborn as sns
-    sns.set()
-    path='D:/Datasets/WESAD/'
+    #sns.set()
+    path='../data/pre-training/WESAD/'
     ckpt_path=proj_path+'/../data/post-training/'
-    curr_time='20220219-035453'#None#'20211003-112847'
-    exp_no=28
+    curr_time=None
+    exp_no=36
     #max_ppg_val=load_data.MAX_PPG_VAL
     #max_ecg_val=load_data.MAX_ECG_VAL
     all_class_ids=copy.deepcopy(load_data.class_ids)
@@ -356,13 +366,15 @@ if __name__=='__main__':
     win_len_s,step_s,latent_size=8,2,2
     bsize=load_data.bsize
     ppg_gen_model_config={'rnn_units':8,'disc_f_list':[8,16,16,32,64],
-                          'gru_drop':0.}
+                              'gru_drop':0.,'z_up_factor':1}
     ecg_gen_model_config={'rnn_units':8,'disc_f_list':[8,16,16,32,64],
-                          'gru_drop':0.}
+                              'gru_drop':0.,'z_up_factor':1}
     
-    #TODO: Uncomment and indent next 2 lines for subject-specific models
-    #for class_name in list(all_class_ids.keys()):
-    #load_data.class_ids={class_name:all_class_ids[class_name]}
+    #load_data.class_ids={'S7':all_class_ids['S7']}
+    
+    #TODO: Uncomment the following loop and indent for subject-specific models
+    #for class_name in list(all_class_ids.keys())[:]:
+    load_data.class_ids={class_name:all_class_ids[class_name]}
     
     #Get Train Data for simulator
     plt.close('all')
@@ -393,12 +405,29 @@ if __name__=='__main__':
         with open(filename, 'wb') as handle:
             pickle.dump([musig_dict,Dsplit_mask_dict], handle)
     
+    ## check if ppg has all labels
+    input_list=input_dict['ppg']
+    #y_test_list=[inp[:,:,1:6] for inp in input_list]
+
+    y_test_list=[np.argmax(inp[:,:,1:6],axis=-1) for inp in input_list]
+    stres_dict={k:v for v,k in enumerate(['garbage','baseline', 'stress', 
+                                          'amusement','meditation'])}
+    class_name_list=list(load_data.class_ids.keys())
+    Dsplit_mask_list_ppg=[Dsplit_mask_dict['ppg'][c] 
+                        for c in Dsplit_mask_dict['Dspecs']['key_order']]
+    for j in range(len(y_test_list)):
+        print(f'\n Class {class_name_list[j]} \n')
+        sel_mask_train,sel_mask_val,sel_mask_test=Dsplit_mask_list_ppg[j]
+        sel_mask_all=((sel_mask_train|sel_mask_val)|sel_mask_test)
+        for k in list(stres_dict.keys()):
+            print(f'% of {k} samples={100*np.mean(y_test_list[j][sel_mask_all].flatten()==stres_dict[k])}')
+
     #See ECG
     #aa=output_list[0][:,0:1].reshape(-1)
     #plt.figure();plt.plot(aa)
     
     #Create Simulator using train data
-    ckpt_path=proj_path+'/../data/post-training/'
+    #ckpt_path=proj_path+'/../data/post-training/'
 
     sim_pks2ppg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ppg_new,
                 Fs_out=load_data.Fs_ppg_new,input_list=input_dict['ppg'],
@@ -407,7 +436,7 @@ if __name__=='__main__':
                         for c in Dsplit_mask_dict['Dspecs']['key_order']],
                 P_ID=class_name,path=ckpt_path,sig_id='ppg',
                 latent_size=latent_size,logging=True,epochs=500,batch_size=32,
-                aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
+                aux_loss_weights=[0.1],RNN_win_len=win_len_s,win_step_size=step_s,
                 current_time=curr_time,exp_id=f'{ver}_{exp_no}',
                 gen_model_config=ppg_gen_model_config)
     sim_pks2ecg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ecg_new,
@@ -417,175 +446,7 @@ if __name__=='__main__':
                         for c in Dsplit_mask_dict['Dspecs']['key_order']],
                 P_ID=class_name,path=ckpt_path,sig_id='ecg',
                 latent_size=latent_size,logging=True,epochs=500,batch_size=32,
-                aux_loss_weights=[5],RNN_win_len=win_len_s,win_step_size=step_s,
+                aux_loss_weights=[0.1],RNN_win_len=win_len_s,win_step_size=step_s,
                 current_time=sim_pks2ppg.current_time,
                 exp_id=sim_pks2ppg.exp_id,gen_model_config=ecg_gen_model_config)
     del sim_pks2ppg,sim_pks2ecg
-#%% Inference
-    filename = (f'{proj_path}/../data/pre-training/WESAD_musig_Dsplit_w{win_len_s}s{step_s}b{bsize}.'
-                'pickle')
-    if os.path.isfile(filename):
-        with open (filename, 'rb') as fp:
-            musig_dict,Dsplit_mask_dict = pickle.load(fp)
-    else:
-        assert False, ('Could not find existing Dsplit_mask_dict. '
-                       'Run get_train_data in R2S mode first.')
-            
-    load_data.class_ids=copy.deepcopy(all_class_ids) #restore class_ids
-    Fs_ppg_new,Fs_ecg_new=load_data.Fs_ppg_new,load_data.Fs_ecg_new
-    #class_name='WESAD'
-    #class_name='S4'
-    #for class_name in [f'S{j}' for j in range(5,6)]:
-    for class_name in list(all_class_ids.keys())[:9]:
-        #load_data.class_ids={class_name:all_class_ids[class_name]}
-        #Create Simulator using train data
-        #sim_pks2sigs=Rpeaks2Sig_Simulator(input_list=[],output_list=[],P_ID=class_name,
-        #        path=ckpt_path,latent_size=2)
-            #Use simulator to produce synthetic output given input
-        sim_pks2ppg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ppg_new,
-                    Fs_out=load_data.Fs_ppg_new,
-                    P_ID=class_name,path=ckpt_path,sig_id='ppg',
-                    latent_size=latent_size,logging=False,batch_size=32,
-                    RNN_win_len=win_len_s,win_step_size=step_s,
-                    exp_id=f'{ver}_{exp_no}',
-                    gen_model_config=ppg_gen_model_config)
-        sim_pks2ecg=Rpeaks2Sig_Simulator(Fs_in=load_data.Fs_ecg_new,
-                    Fs_out=load_data.Fs_ecg_new,
-                    P_ID=class_name,path=ckpt_path,sig_id='ecg',
-                    latent_size=latent_size,logging=False,batch_size=32,
-                    RNN_win_len=win_len_s,win_step_size=step_s,
-                    exp_id=sim_pks2ppg.exp_id,
-                    gen_model_config=ecg_gen_model_config)
-    #for class_name in list(all_class_ids.keys()):
-        test_in,test_out_for_check,_,Dsplit_mask_dict=load_data.get_test_data(
-                            path+class_name,mode='R2S',win_len_s=win_len_s,
-                            step_s=step_s,Dsplit_mask_dict=Dsplit_mask_dict)
-        
-        # #test_time=int((1-load_data.test_ratio)*len(test_in['ppg']))/Fs_ppg_new
-        # ppg_synth,test_in['ppg']=sim_pks2ppg(test_in['ppg'])
-        # ecg_synth,test_in['ecg']=sim_pks2ecg(test_in['ecg'])
-        
-        # test_out_for_check['ppg']=test_out_for_check['ppg'][:len(ppg_synth)]
-        # test_out_for_check['ecg']=test_out_for_check['ecg'][:len(ecg_synth)]
-        # #test_out_for_check['ppg']=test_out_for_check['ppg'][:len(ppg_synth)]
-        # #test_out_for_check['ecg']=test_out_for_check['ecg'][:len(ecg_synth)]
-        
-        class_no,test_seq_no=0,0
-        cond_ppg_wins=test_in['ppg'][class_no]#[test_seq_no]
-        ppg_real_wins=test_out_for_check['ppg'][class_no]#[test_seq_no]
-        cond_ecg_wins=test_in['ecg'][class_no]#[test_seq_no]
-        ecg_real_wins=test_out_for_check['ecg'][class_no]#[test_seq_no]
-        
-        # Add noise
-        #plt.figure(99);plt.plot(cond_ecg_wins[0,:,0])
-        #cond_ecg_wins[:,:,0]+=np.random.normal(0,0.1,cond_ecg_wins[:,:,0].shape)
-        #plt.plot(cond_ecg_wins[0,:,0],'--')
-        
-        
-        # defragment windows into continous signal
-        cond_ppg,ppg_real=(load_data.sliding_window_defragmentation([
-            cond_ppg_wins,ppg_real_wins],win_len_s*Fs_ppg_new,
-            step_s*Fs_ppg_new))
-        cond_ecg,ecg_real=(load_data.sliding_window_defragmentation([
-            cond_ecg_wins,ecg_real_wins],win_len_s*Fs_ecg_new,
-            step_s*Fs_ecg_new))
-        
-        #Generate synthetic data
-        ppg_synth,cond_ppg=sim_pks2ppg(cond_ppg)
-        ecg_synth,cond_ecg=sim_pks2ecg(cond_ecg)
-        
-        #time for plotting
-        t_ppg=np.arange(len(ppg_synth))/Fs_ppg_new
-        t_ecg=np.arange(len(ecg_synth))/Fs_ecg_new
-        #clip real data
-        ecg_real=ecg_real[:len(ecg_synth)]
-        ppg_real=ppg_real[:len(ppg_synth)]
-        
-        # #second generation to check variety
-        # ppg_synth_2,cond_ppg=sim_pks2ppg(cond_ppg)
-        # ecg_synth_2,cond_ecg=sim_pks2ecg(cond_ecg)
-        # plt.figure();ax1=plt.subplot(211)
-        # plt.plot(t_ecg,ecg_real,t_ecg,ecg_synth,t_ecg,ecg_synth_2,'--')
-        # plt.legend(['Real','Synth','Synth_2']);plt.title('ECG')
-        # plt.subplot(212, sharex=ax1)
-        # plt.plot(t_ppg,ppg_real,t_ppg,ppg_synth,t_ppg,ppg_synth_2,'--')
-        # plt.title('PPG')
-        # #plt.legend(['Real','Synth','Synth_2'])
-        
-        #make some plots
-        #start,end=clip_ecg
-        fig = plt.figure()
-        ax1 = fig.add_subplot(211)
-        plt.plot(t_ecg,ecg_real,t_ecg,cond_ecg[:,0])
-        leg_list=['True','R-peaks']+[f'Synth_{j}' for j in range(5)]
-        mark_list=['r','g','c','m','k']
-        for i in range(5):
-            mask=cond_ecg[:,i+1].astype(bool)
-            plt.plot(t_ecg[mask],ecg_synth[mask],mark_list[i])
-        plt.legend(leg_list,loc='lower right')
-        #plt.xlabel('Time (s.)')
-        plt.title(f'ECG for {class_name}');plt.grid(True)
-        
-        #fig2 = plt.figure()
-        #ax2 = fig2.add_subplot(212, sharex=ax1)
-        plt.subplot(212, sharex=ax1)
-        plt.plot(t_ppg,ppg_real,t_ppg,cond_ppg[:,0])
-        leg_list=['True','R-peaks']+[f'Synth_{j}' for j in range(5)]
-        mark_list=['r','g','c','m','k']
-        for i in range(5):
-            mask=cond_ppg[:,i+1].astype(bool)
-            plt.plot(t_ppg[mask],ppg_synth[mask],mark_list[i])
-        plt.legend(leg_list,loc='lower right')
-        plt.xlabel('Time (s.)')
-        plt.title((f'PPG for {class_name}'));plt.grid(True)
-        
-
-#%%
-        #plt.suptitle(f'Test data time starts at {test_time} s.')
-        
-        
-        delta=5
-        rpeaks_ecg=np.arange(len(cond_ecg))[cond_ecg[:,0].astype(bool)]
-        rpeaks_ppg=np.arange(len(cond_ppg))[cond_ppg[:,0].astype(bool)]
-
-        #rpeaks={'ppg_R_Peaks':rpeaks}
-        #t_lim=100 #limit in sec.
-        #ecg_real=ecg_real
-        
-        #Check ecg morphs
-        signal_peak, morph_features = nk.ecg_delineate(ecg_real[delta:], 
-            rpeaks_ecg[1:]-delta, sampling_rate=Fs_ecg_new, show=True,
-            method='peaks', show_type='peaks')
-        plt.title(class_name);
-        signal_peak, morph_features = nk.ecg_delineate(ecg_synth[delta:], 
-            rpeaks_ecg[1:]-delta, sampling_rate=Fs_ecg_new, show=True,
-            method='peaks', show_type='peaks')
-        
-        #Check ppg morphs
-        wins_ppg=load_data.get_windows_at_peaks(rpeaks_ppg[1:-1]-delta,
-                    ppg_real[delta:].flatten(),w_pk=25,w_l=10,
-                    show_plots=True,n_wins=9,ylims=[-0.5,0.5])
-        wins_ppg=load_data.get_windows_at_peaks(rpeaks_ppg[1:-1]-delta,
-                    ppg_synth[delta:].flatten(),w_pk=25,w_l=10,show_plots=True,
-                    n_wins=30,ylims=[-0.5,0.5])
-        #plt.figure()
-        # ppg_morphs = nk.ecg_segment(ppg_synth[delta:].flatten(), 
-        #     rpeaks_ppg[1:]-delta, sampling_rate=Fs_ppg_new, show=True)
-        # fig, ax = plt.subplots()
-        # ppg_morphs.Label = ppg_morphs.Label.astype(int)
-        # for label in ppg_morphs.Label.unique():
-        #     epoch_data = ppg_morphs[ppg_morphs.Label == label]
-        #     ax.plot(epoch_data.Time, epoch_data.Signal, color="grey", 
-        #             alpha=0.2, label="_nolegend_")
-    
-        del sim_pks2sigs
-
-    #synth_ecg_out,test_in_ecg,clip_ecg,synth_ppg_out,test_in_ppg,clip_ppg,ppg_pks,ecg_pks=sim_pks2sigs(test_in)
-
-    # ppg_synth*=musig_dict['ppg']['sigma'] #rescale
-    # ppg_synth+=musig_dict['ppg']['mu'] #add back mean
-    # ecg_synth*=musig_dict['ecg']['sigma'] #rescale
-    # ecg_synth+=musig_dict['ecg']['mu'] #add back mean
-    
-    #with open('./figures/fig_REPv3.pickle', 'wb') as file:
-    #    pickle.dump([fig1,fig2],file

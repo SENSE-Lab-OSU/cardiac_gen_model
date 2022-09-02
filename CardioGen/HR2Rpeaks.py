@@ -44,12 +44,13 @@ import pickle
 import time
 import neurokit2 as nk
 import seaborn as sns
-sns.set()
+#sns.set()
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 tf.keras.backend.set_floatx('float32')
 proj_path='.'#(os.path.dirname(os.path.abspath(__file__))).replace(os.sep,'/')
+eps=1e-8 #smoothening wherever division by zero may occur in autograd
 def show_plot():
     #fig=plt.gcf()
     #mpld3.display(fig)
@@ -86,6 +87,7 @@ class HR2Rpeaks_Simulator(Simulator):
         W_hrv_freq=np.ones(len(self.hrv_freqs))
         W_hrv_freq[self.hrv_freqs<=0.5]=4
         W_hrv_freq[((self.hrv_freqs>0.15) & (self.hrv_freqs<=0.4))]=6
+        
         #W_hrv_freq[self.hrv_freqs==0.]=10
         #Sum of W=4*11+6*10+80*1=184 vs. 19 earlier
         #Sum of W=10+8*4+8*6+64*1=154 vs. 19 earlier
@@ -129,11 +131,16 @@ class HR2Rpeaks_Simulator(Simulator):
         def get_PSD(tacho):
             tacho = tf.squeeze(tacho,axis=[-1])
             fft_U=tf.signal.rfft(tacho,fft_length=[nfft])
-            PSD=tf.math.divide(tf.square(tf.abs(fft_U)),norm_factr)
+            #PSD=tf.math.divide(tf.square(tf.abs(fft_U)),norm_factr)
+            PSD=tf.math.divide((tf.math.real(fft_U)**2+
+                               tf.math.imag(fft_U)**2),norm_factr)
+
             #Sub-Select the freq band of interest
             #PSD=PSD_U[:,1:len_fft_out] #skipping DC value
             #PSD_U=tf.reshape(PSD_U,shape=[-1,1])
             return PSD
+        #print(f'at y_hat={np.mean(~np.isnan(y_hat.numpy()))}')
+
         # Get some common parameters
         nfft,last_dim=y_true.get_shape().as_list()[1:]
         assert last_dim==1, 'last dimension is not 1. Please check the tacho tensor'
@@ -142,11 +149,13 @@ class HR2Rpeaks_Simulator(Simulator):
         #tacho_fft=tacho[:,::dsamp_factor] #dsample tacho
         
         #Find periodogram by simple welch method
-        norm_factr=tf.constant(int(nfft/2)+1,dtype=tf.float32)
+        norm_factr=tf.constant((int(nfft/2)+1)+eps,dtype=tf.float32)
         #get PSDs
         PSD_true=get_PSD(y_true)
         PSD_hat=get_PSD(y_hat)
+        
         loss=tf.reduce_mean(self.W_hrv_freq*tf.square(PSD_true-PSD_hat))
+        #print(np.mean(~np.isnan(loss.numpy())))
         #return  PSD_true,PSD_hat,loss #TODO: for debugging
         return loss
         
@@ -193,14 +202,17 @@ class HR2Rpeaks_Simulator(Simulator):
                        optimizers=optimizers,save_flag=save_flag,
                        aux_losses=[self._hrv_freq_loss],
                        aux_losses_weights=[1e-3],feat_loss_weight=0,
-                       Unet_reps=4)
+                       Unet_reps=4,z_up_factor=1)
         #model.summary()
         return model
     
     def learn_gen_model(self,latent_size=4,save_flag=True,make_plots=True,
-                        EPOCHS = 100, logging=True):
+                        EPOCHS = 100, logging=True,current_time=None):
         #logging stuff
-        current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        if current_time is None:
+            current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        #current_time = '20220627-005938'
+        
         log_prefix='../experiments/condWGAN/{}_{}/HR2R'.format(self.exp_id,current_time)
         train_log_dir = log_prefix + '/train'
         test_log_dir = log_prefix + '/test'
@@ -218,7 +230,7 @@ class HR2Rpeaks_Simulator(Simulator):
         for i in range(len(input_list)):
             #data split masks
             sel_mask_train,sel_mask_val,_=self.Dsplit_mask_list[i]
-            print(f'Selected {np.sum(sel_mask_train)/len(sel_mask_train)} ' 
+            print(f'Selected {np.mean(sel_mask_train)} ' 
                   f' ratio of samples from class {i} for training')
             
             val_in_list.append(input_list[i][sel_mask_val])
@@ -244,6 +256,9 @@ class HR2Rpeaks_Simulator(Simulator):
         model=self.create_gen_model(latent_size=latent_size,save_flag=save_flag,
                                     model_path=checkpoint_dir)
         
+        #Restore pre-trained weights
+        model.ckpt.restore(model.manager.latest_checkpoint)
+        print("Restored from {}".format(model.manager.latest_checkpoint))
 
         #TODO: Uncomment these to check the graphs
         print(self.model_in.dtype,self.model_out.dtype)
@@ -382,13 +397,15 @@ class HR2Rpeaks_Simulator(Simulator):
 if __name__=='__main__':
     #Get Train Data for simulator
     plt.close('all')
-    path='D:/Datasets/WESAD/'
+    path='../data/pre-training/WESAD/'
     win_len_s=8;step_s=2;Fs_tacho=5;latent_size=4
     bsize=load_data.bsize
     input_list,output_list=[],[]
     all_class_ids=copy.deepcopy(load_data.class_ids)
     ckpt_path=proj_path+'/../data/post-training/'
     P_ID='WESAD'
+    expid=f'{ver}_41'#Manually determined which experiment's weights finally used
+
 
     # (kalidas,7306,8.6s), (nabian,7270,9.2s), (neurokit,7253,7.6), 
     # (pantompkins1985, 7346, 14.4), (hamilton2002, 7355, 11), (elgendi2010, 7332, 19.35)
@@ -439,164 +456,6 @@ if __name__=='__main__':
                     RNN_win_len_s=win_len_s+(load_data.test_bsize-1)*step_s,
                     step_size_s=step_s,P_ID=P_ID,path=ckpt_path,Fs_HR=Fs_tacho,
                     Fs_tacho=Fs_tacho,latent_size=latent_size,
-                    exp_id=f'{ver}_25',epochs=3000)
+                    exp_id=f'{expid}',epochs=1500)
     
     del sim_HR2pks
-    
-    # %%
-    #Test Simulator
-    #Use simulator to produce synthetic output given input
-    #load_data.class_ids={f'S{k}':v for v,k in enumerate(list(range(2,12))+list(range(13,18)))}
-    all_class_ids=copy.deepcopy(load_data.class_ids)
-    pred_step=32#step_s
-    #Load model
-    sim_HR2pks=HR2Rpeaks_Simulator(
-                RNN_win_len_s=win_len_s+(load_data.test_bsize-1)*step_s,
-                step_size_s=step_s,P_ID=P_ID,path=ckpt_path,Fs_HR=Fs_tacho,
-                Fs_tacho=Fs_tacho,latent_size=latent_size)
-    #del sim_HR2pks
-    #load_data.class_ids:
-    #class_name='S5'
-    #for class_name in ['S5']:
-    for class_name in list(all_class_ids.keys())[:2]:
-        # load_data.class_ids={'S7':all_class_ids['S7']}
-        # test_in,test_out_for_check=load_data.get_test_data(path+'S7',mode='HR2R',win_len_s=win_len_s
-        #                                      ,step_s=step_s,Fs_pks=100)
-        # HR_S7=test_in[:,0]
-        
-        # #load_data.class_ids={class_name:all_class_ids[class_name]}
-        # test_in,test_out_for_check,test_arr_pks=load_data.get_test_data(path+class_name,
-        #                                     mode='HR2R',win_len_s=win_len_s
-        #                                      ,step_s=step_s,Fs_tacho=Fs_tacho)
-        # lenth=min(len(HR_S7),len(test_in))
-        # test_in=test_in[:lenth]
-        # test_in[:,0]=HR_S7[:lenth]
-        list_cond_HRV,list_HRV,Dsplit_mask_dict=load_data.get_test_data(
-                        path+class_name,mode='HR2R',win_len_s=win_len_s,
-                        step_s=step_s,Fs_tacho=Fs_tacho,
-                        Dsplit_mask_dict=Dsplit_mask_dict)
-        
-        class_no,test_seq_no=0,0
-        cond_HRV_wins=list_cond_HRV[class_no]#[test_seq_no]
-        HRV_real_wins=list_HRV[class_no]#[test_seq_no]
-
-        # Add noise
-        #plt.figure(99);plt.plot(cond_ecg_wins[0,:,0])
-        #cond_ecg_wins[:,:,0]+=np.random.normal(0,0.1,cond_ecg_wins[:,:,0].shape)
-        #plt.plot(cond_ecg_wins[0,:,0],'--')
-        
-        
-        # defragment windows into continous signal
-        test_in,test_out_for_check=(load_data.sliding_window_defragmentation([
-            cond_HRV_wins,HRV_real_wins],
-            ((load_data.test_bsize-1)*step_s+win_len_s)*Fs_tacho,
-            step_s*Fs_tacho))
-    
-        
-        #Fs_ppg=25;Fs_ecg=100
-        arr_pk_synth,test_in,arr_tacho_synth=sim_HR2pks(test_in,
-                                                        step_size_s=pred_step)
-        # test_out_for_check=test_out_for_check[:len(test_out_for_check)-
-        #                 int(len(test_out_for_check)%sim_HR2pks.RNN_win_len)]
-        test_out_for_check=test_out_for_check[:len(test_in)]
-                                              
-        t_tacho=np.arange(len(arr_tacho_synth))/Fs_tacho
-        plt.figure(100);plt.plot(t_tacho,test_out_for_check.flatten(),'-')
-        plt.plot(t_tacho,arr_tacho_synth,'--')
-        
-        # #Plot some stuff
-        # fig=plt.figure()  
-        # plt.plot(test_out_for_check[19:])
-        # plt.plot(arr_pk)
-        # plt.legend(['True','Synthetic'])
-        # #mpld3.display(fig)
-        # show_plot()
-        
-        #Spectral analysis of tachos
-        #lenth=len(test_out_for_check)
-        #load_data.plot_periodograms(test_out_for_check.flatten(),
-        #                            arr_tacho_synth,test_in,Fs_tacho=5)
-        load_data.plot_periodograms(test_out_for_check.flatten(),
-                            arr_tacho_synth,test_in,Fs_tacho=5)
-        plt.suptitle(class_name)
-        # load_data.plot_STFT_tacho(test_out_for_check.flatten(),arr_tacho_synth,
-        #                           test_in[:,0],Fs_tacho=5)
-        
-        # #HRV analysis of arr_pks
-        # #TODO: May need to edit these nk functions to directly input rri/tacho
-        # Fs=100
-        # hrv_features = nk.hrv(test_arr_pks, sampling_rate=Fs, show=True);show_plot()
-        # plt.suptitle(class_name)
-        # hrv_features_synth = nk.hrv(arr_pk_synth, sampling_rate=Fs, show=True);show_plot()
-        # plt.suptitle(class_name)
-    
-    
-    #plt.figure(100);plt.legend(['S3', 'S7', 'S10', 'S11', 'S15'])
-    
-    #hrv_lomb = nk.hrv_frequency(test_out_for_check[19:], sampling_rate=100, show=True, psd_method="lomb");show_plot()
-    #hrv_lomb_synth = nk.hrv_frequency(arr_pk, sampling_rate=100, show=True, psd_method="lomb");show_plot()
-
-#%%    
-    #manual calculation
-    def find_tacho(arr_pk,Fs_pks=100):
-        Fs_pks=100
-        pk_locs=np.arange(len(arr_pk))[arr_pk.astype(bool)]
-        time_locs=pk_locs/Fs_pks
-        RR_ints=np.diff(time_locs).reshape((-1,1))
-        return time_locs[1:],RR_ints
-    
-    time_locs,RR_ints=find_tacho(test_out_for_check[19:])
-    time_locs_synth,RR_ints_synth=find_tacho(arr_pk)
-    
-    # Get lomb periodogram
-    
-    #import scipy.signal as signal
-    from astropy.timeseries import LombScargle
-    frequency, power = LombScargle(time_locs, RR_ints.reshape(-1)).autopower()
-    frequency_synth, power_synth = LombScargle(time_locs_synth, RR_ints_synth.reshape(-1)).autopower()
-    
-    #from lib.simple_NFFT import ndft#,nfft2, nfft3
-    #power_synth = ndft(time_locs, RR_ints.reshape(-1),int(len(power)))
-
-    #f = np.linspace(0.01, 12, 1000)
-    #pgram = signal.lombscargle(time_locs, RR_ints.reshape(-1), f, normalize=False)
-    #pgram_synth = signal.lombscargle(time_locs_synth, RR_ints_synth.reshape(-1), f, normalize=False)
-
-    plt.figure()
-    plt.plot(time_locs,RR_ints,time_locs_synth,RR_ints_synth,'r--')
-    plt.title('Tachogram')
-    plt.xlabel('Time (s)');plt.ylabel('RR_interval (s)')
-    plt.legend(['True','Synthetic'])
-    plt.grid(True)
-    
-    plt.figure()
-    #plt.plot(f,pgram,f,pgram_synth,'r--')
-    plt.plot(frequency, power, frequency_synth, power_synth,'r--')
-    plt.title('PSD of Tachogram')
-    plt.xlabel('Frequency (Hz)');plt.ylabel('PSD')
-    plt.legend(['True','Synthetic'])
-    plt.grid(True)
-    
-    #plt.figure();plt.plot(power)
-    #plt.figure();plt.plot(np.abs(power_synth)**2)
-
-# =============================================================================
-#     #generate HR
-#     len_in_s=20.48 #s
-#     len_out=4
-#     len_in=Fs*len_in_s
-#     arr_t=np.arange(250,900,len_in_s) #change time duration when longer noise exists
-#     t=arr_t[np.random.randint(len(arr_t))] # sample seq. length in s.
-#     t1=np.linspace(0,t,num=int(t*Fs),endpoint=False)
-#     HR_curve_f,D_HR=HR_func_generator(t1)
-#     
-#     #Test Simulator
-#     sim_HR2pks=HR2Rpeaks_Simulator([],[],path=path,P_ID=P_ID,Fs_HR=Fs)
-#     arr_pk=sim_HR2pks(HR_curve_f)
-#     
-#     #Check if upsampling works
-#     arr_pk_upsampled=sim_HR2pks(HR_curve_f,Fs_out=100)
-#     check=arr_pk_upsampled.reshape(-1,4)
-#     plt.figure();plt.plot(arr_pk);plt.plot(arr_pk_upsampled[::4])
-#     #ppg1,HR1=gen_ppg_from_HR(t1,HR_curve_f,D_HR,peak_id,make_plots=make_plots)
-# =============================================================================

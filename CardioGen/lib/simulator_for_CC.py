@@ -54,7 +54,7 @@ class Simulator(object):
         assert win_size==tseries[0].shape[1], 'Incorrect window size of input tseries'
         defrag_tseries=[]
         for j in range(len(tseries)):
-            if len(tseries[j].shape)==2: tseries[j]=np.expand_dim(tseries[j],-1)
+            if len(tseries[j].shape)==2: tseries[j]=np.expand_dims(tseries[j],-1)
             defrag_tseries.append(np.concatenate([tseries[j][0,...],
             tseries[j][1:,-step_size:,...].reshape([-1,*tseries[j].shape[2:]])],
             axis=0))

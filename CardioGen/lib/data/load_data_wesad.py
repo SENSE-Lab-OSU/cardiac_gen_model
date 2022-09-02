@@ -14,8 +14,9 @@ import inspect
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
-from utils import filtr_HR, get_uniform_tacho, get_continous_wins
+from .utils import filtr_HR, get_uniform_tacho, get_continous_wins
 
+rng = np.random.default_rng(seed=1)
 MAX_PPG_VAL=1000 #1789
 MAX_ECG_VAL=1
 FIX_ECG_MEAN=0.5
@@ -121,18 +122,60 @@ def acc_filter(X0,Fs_acc,f_cutoff=10,show_plots=False):
         plt.title('Digital filter frequency response')
     return X
 
-def tacho_filter(X0,Fs,f_cutoff=0.5,show_plots=False,margin=0.075):
+def ecg_filter(X0,Fs=256.,f_stop=0.4,f_pass=1.,atte_stop=60,
+                    ripp_pass=1,show_plots=False):
+    '''
+    Equivalent python filter for following MATLAB cheby2 filter
+    highpass_filter = designfilt('highpassiir', 'StopbandFrequency', 0.4, 
+                                 'PassbandFrequency', 0.8, ...
+                                 'StopbandAttenuation', 60, 
+                                 'PassbandRipple', 1, 'SampleRate', 256, 
+                                 'DesignMethod', 'cheby2');
+    '''
+    #Fs=float(Fs)
+    # High-pass stop-band frequency
+    ws = f_stop/(Fs/2)
+    # High-pass pass-band frequency
+    wp = f_pass/(Fs/2)
+    #design
+    b,a = sig.iirdesign(wp, ws, ripp_pass, atte_stop, analog=False, 
+                        ftype='cheby2',output='ba', fs=None)
+    # orderFilter = sig.cheb2ord(wp, ws, gpass, gstop, analog=False, fs=256)
+    
+    #filter
+    X=np.zeros(X0.shape)
+    for i in range(X0.shape[1]):
+        #X[:,i] = sig.convolve(X1[:,i],b,mode='same'); # filtering using convolution, mode='same' returns the 'centered signal without any delay
+        X[:,i] = sig.filtfilt(b,a,X0[:,i],axis=0)
+        #X[:,i] = sig.lfilter(b, a, X0[:,i], axis=0, zi=None)
+    if show_plots:
+        w, h = sig.freqz(b,a)
+        plt.figure()#;plt.subplot(211)
+        plt.plot(w*(0.5*Fs/np.pi), 20 * np.log10(abs(h)), 'b')
+        plt.grid(True)
+        plt.ylabel('Amplitude [dB]', color='b')
+        plt.xlabel('Frequency [Hz]')
+        plt.title('Digital filter frequency response')
+        
+        for j in range(X0.shape[1]):
+            plt.figure()
+            plt.plot(X0[:,j]);plt.plot(X[:,j],'--')
+            plt.legend(['Original','Filtered'])
+            plt.grid(True)
+    return X
+
+def tacho_filter(X0,Fs,f_cutoff=0.5,order=None,show_plots=False,margin=0.075):
     '''
     Band-pass filter multi-channel PPG signal X0
     '''
     nyq=Fs/2
     assert f_cutoff+margin<nyq,'f_cutoff should be < nyquist frequency for Fs'
-    n=60*Fs-1 # filter order
-    b = sig.firls(n,np.array([0,f_cutoff,f_cutoff+margin,nyq]),
+    if order is None: order=50*Fs-1 # filter order
+    b = sig.firls(order,np.array([0,f_cutoff,f_cutoff+margin,nyq]),
                   np.array([1,1,0,0]),np.array([1,1]),nyq=nyq)
     X=np.zeros(X0.shape)
     for i in range(X0.shape[1]):
-        #X[:,i] = sig.convolve(X1[:,i],b,mode='same'); # filtering using convolution, mode='same' returns the 'centered signal without any delay
+        #X[:,i] = sig.convolve(X0[:,i],b,mode='same'); # filtering using convolution, mode='same' returns the 'centered signal without any delay
         X[:,i] = sig.filtfilt(b,[1],X0[:,i])
     
     if show_plots:
@@ -407,7 +450,7 @@ def plot_STFT_tacho(tacho,tacho_synth,inv_HR_interpol,Fs_tacho):
 def plot_periodograms(tacho,tacho_synth,cond,Fs_tacho=5):
     inv_HR_interpol=cond[:,0]
     win_size=32*Fs_tacho
-    step_size=4*Fs_tacho
+    step_size=2*Fs_tacho
     noverlap=win_size-step_size
     nfft=win_size*1#8*Fs_tacho
 
@@ -419,12 +462,12 @@ def plot_periodograms(tacho,tacho_synth,cond,Fs_tacho=5):
     # stres_resamp=np.round(np.mean(stres_wins,axis=-1)).astype(int)
     # t_stres=np.mean(t_wins,axis=-1)
     
-    # plot outputs directly
-    t_tacho=np.arange(len(tacho))/Fs_tacho
-    plt.figure()
-    plt.plot(t_tacho,inv_HR_interpol,t_tacho,tacho,'--',t_tacho,tacho_synth,':')
-    plt.legend(['avgHRV','HRV_{true}','HRV_{synth}'])
-    plt.grid(True)
+    # # plot outputs directly
+    # t_tacho=np.arange(len(tacho))/Fs_tacho
+    # plt.figure()
+    # plt.plot(t_tacho,inv_HR_interpol,t_tacho,tacho,'--',t_tacho,tacho_synth,':')
+    # plt.legend(['avgHRV','HRV_{true}','HRV_{synth}'])
+    # plt.grid(True)
     
     #plt.subplot(212,sharex=ax1,sharey=ax1)
     #plt.plot(t_tacho,tacho,t_tacho,tacho_synth,'--')
@@ -445,9 +488,9 @@ def plot_periodograms(tacho,tacho_synth,cond,Fs_tacho=5):
     stres_cat,_=create_stress_signal(stres_signal,Fs=Fs_tacho,
                                    t_interpol=t_interpol)
     
-    plot_categorical_peridogram(stft_list,f,stres_cat,signal_names,
+    fig=plot_categorical_peridogram(stft_list,f,stres_cat,signal_names,
                                 marker_list)
-    return
+    return fig
 
 def plot_categorical_peridogram(stft_list,freqs,stres_cat,signal_names,
                                 marker_list):
@@ -472,7 +515,7 @@ def plot_categorical_peridogram(stft_list,freqs,stres_cat,signal_names,
     '''
     freq_mask=((freqs>0) & (freqs<=0.6))
     n_cat=stres_cat.shape[1]
-    plt.figure()
+    fig=plt.figure()
     for k in range(n_cat): 
         #stress_mask=(stres_resamp==k)
         stress_mask=(stres_cat[:,k].astype(bool))
@@ -488,7 +531,7 @@ def plot_categorical_peridogram(stft_list,freqs,stres_cat,signal_names,
         if k==0: plt.legend(signal_names)
         if k==int(n_cat/2): plt.ylabel('Periodogram Magnitude')
         if k==(n_cat-1): plt.xlabel('Frequency (Hz.)')
-    return
+    return fig
 
 def compare_spectrums(sig1,sig2,Fs,freq_range=[0,12.5]):
     err_msg=(f'sig1 shape {sig1.shape} is not equal to'
@@ -510,19 +553,22 @@ def compare_spectrums(sig1,sig2,Fs,freq_range=[0,12.5]):
     plt.xlabel('FFT Magnitude')
     return
 
-def get_Dsplit_mask(sel_mask,win_len_s,step_size_s,Fs_out,
+def get_Dsplit_mask(sel_mask,stres_mask,win_len_s,step_size_s,Fs_out,
                     test_ratio,test_block_size,
-                    val_ratio,val_block_size,sel_thres=0.85,
+                    val_ratio,val_block_size,sel_thres=0.85,stres_thres=0.99,
                     test_avail_sel_mask=None,test_sub_sel_mask=None):
     win_len,step_size=win_len_s*Fs_out,step_size_s*Fs_out
     
     # Window data
-    sel_mask_wins=sliding_window_fragmentation([sel_mask],win_len,step_size)
+    sel_mask_wins,stres_mask_wins=sliding_window_fragmentation([sel_mask,
+                                            stres_mask],win_len,step_size)
             
     # sqi based window selection
     #sel_mask_wins=arr_y[:,:,C_sel_mask] #(N,T)
     #arr_y=arr_y[:,:,C_sel_mask+1:] #Remove selection mask channel
     sel_mask_thres=(np.mean(sel_mask_wins,axis=1)>sel_thres)
+    stres_mask_thres=(np.mean(stres_mask_wins,axis=1)>stres_thres)
+
     
     # Keep atleast ratio no. of windows
     n_olap_wins=int(np.ceil(win_len/step_size)-1)
@@ -541,22 +587,38 @@ def get_Dsplit_mask(sel_mask,win_len_s,step_size_s,Fs_out,
         n_test_blocks-=n_test_init
         sub_bsel_idxs_init=np.arange(len(test_sub_bsel_mask)
                                      )[test_sub_bsel_mask.astype(bool)]
+    
+    # Remove stress=0 samples
+    print(np.sum(sel_mask_thres))
+    sel_mask_sample=(sel_mask_thres & stres_mask_thres)
+    if test_avail_sel_mask is not None:
+        test_avail_sel_mask=(test_avail_sel_mask & stres_mask_thres)
         
-    test_sel_mask, sel_mask_thres=sample_continous_blocks(sel_mask_thres,
+    print(np.sum(sel_mask_sample))
+    test_sel_mask, sel_mask_sample=sample_continous_blocks(sel_mask_sample,
                                 test_block_size,n_test_blocks,n_olap_wins,
                                 test_avail_sel_mask,sub_bsel_idxs_init)
-    val_sel_mask, sel_mask_thres=sample_continous_blocks(sel_mask_thres,
+    print(np.sum(sel_mask_sample))
+    bsel_wins=test_sel_mask+(sel_mask_sample[:,0].astype(int))
+    assert (np.max(bsel_wins)<=1), 'block selection based split is overlapping'
+    val_sel_mask, sel_mask_sample=sample_continous_blocks(sel_mask_sample,
                                 val_block_size,n_val_blocks,0)
-    train_sel_mask=sel_mask_thres.flatten().astype(int)
+    print(np.sum(sel_mask_sample),np.sum((sel_mask_thres & 
+                                        np.invert(stres_mask_thres))))
+    #Add valid stress=0 samples back to training data
+    sel_mask_sample=(sel_mask_sample | (sel_mask_thres & 
+                                        np.invert(stres_mask_thres)))
+    train_sel_mask=sel_mask_sample.flatten().astype(int)
     
 
 
     # verify block selection based split 
     bsel_wins=test_sel_mask+val_sel_mask+train_sel_mask
-    assert bsel_wins.all()<=1, 'block selection based split is overlapping'
-    n_bsel_wins=np.sum(bsel_wins)
+    assert (np.max(bsel_wins)<=2), 'block selection based split is overlapping'
+    bsel_olap_wins=(bsel_wins==2).astype(int)
+    n_bsel_wins,n_bsel_olap_wins=np.sum(bsel_wins),np.sum(bsel_olap_wins)
     check_up=(n_all_wins-n_bsel_wins)<=(n_test_blocks+n_test_init)*(2*n_olap_wins)
-    check_down=0<(n_all_wins-n_bsel_wins)
+    check_down=(n_bsel_olap_wins)<=n_val_blocks*(2*n_olap_wins)
     assert (check_up and check_down), 'unexpected no. of blocks selection windows'
     #arr_y,out=arr_y[sel_mask_thres],out[sel_mask_thres]
     Dsplit_mask=np.stack([train_sel_mask,val_sel_mask,test_sel_mask],axis=0)
@@ -590,12 +652,13 @@ def sample_continous_blocks(sel_mask_thres,block_size,n_blocks,n_olap_wins=0,
     else:
         print('Enough continous blocks. Will select uniformly.')
         # Choose uniform indexing style
-        max_step=int(len(bsel_idxs)/n_blocks)
-        sub_bsel_idxs=bsel_idxs[:max_step*n_blocks:max_step]
+        # max_step=int(len(bsel_idxs)/n_blocks)
+        # sub_bsel_idxs=bsel_idxs[:max_step*n_blocks:max_step]
         # sub_bsel_idxs=bsel_idxs[np.round(np.linspace(0,len(bsel_idxs)-1,
         #                                              n_blocks)).astype(int)]
+        sub_bsel_idxs=rng.permutation(bsel_idxs)[:n_blocks]
         assert len(sub_bsel_idxs)==n_blocks, 'uniform election incorrect'
-        #sub_bsel_idxs=np.random.permutation(bsel_idxs)[:n_blocks]
+
     
     # append existing sub_sel_mask's idx to bidx
     if sub_bsel_idxs_init is not None: 
@@ -621,6 +684,7 @@ def sample_continous_blocks(sel_mask_thres,block_size,n_blocks,n_olap_wins=0,
             sel_mask_thres[idx-n_olap_wins:idx+block_size+n_olap_wins]=0
     
     return sub_sel_mask.astype(int), sel_mask_thres
+#%% For CG_HRV
 
 def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict,
                         mode='train'):
@@ -664,8 +728,12 @@ def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict
         
         # Uniformly interpolate
         #t_interpol,RR_ints=get_leading_tacho(RR_ints_NU,fs=Fs_tacho)
-        t_interpol,RR_ints=get_uniform_tacho(RR_ints_NU,fs=Fs_tacho,t_bias=RR_extreme_idx[0]/Fs_pks)
-        tacho=tacho_filter(RR_ints, Fs_tacho,show_plots=False)
+        t_interpol,RR_ints=get_uniform_tacho(RR_ints_NU,fs=Fs_tacho,
+                                             t_bias=RR_extreme_idx[0]/Fs_pks)
+        tacho=tacho_filter(RR_ints, Fs_tacho,f_cutoff=0.5,order=100-1,
+                           show_plots=False,margin=0.15)
+        avgHRV_interpol=(tacho_filter(RR_ints,Fs_tacho,f_cutoff=0.125,
+                        order=200-1,show_plots=False,margin=0.075)).flatten()
         #adjust t_interpol for RR_extreme_idx. Now included in get_tacho()
         #t_interpol=t_interpol+(RR_extreme_idx[0]/Fs_pks)
         
@@ -698,9 +766,10 @@ def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict
         
         clip_tacho_mask=((t_interpol>=t_start) & (t_interpol<=t_stop))
         t_interpol,tacho=t_interpol[clip_tacho_mask],tacho[clip_tacho_mask]
+        avgHRV_interpol=avgHRV_interpol[clip_tacho_mask]
         #avgHRV_interpol = f_interpol(t_interpol)
-        avgHRV_interpol=(tacho_filter(tacho,Fs_tacho,f_cutoff=0.075,
-                                       show_plots=False)).flatten()
+        # avgHRV_interpol=(tacho_filter(tacho,Fs_tacho,f_cutoff=0.075,
+        #                                show_plots=False)).flatten()
 
         #compare_spectrums(avgHRV_interpol,avgHRV_interpol_2,Fs_tacho,[0,0.2])
         #compare_spectrums(tacho.flatten(),avgHRV_interpol_2,Fs_tacho,[0,0.6])
@@ -719,7 +788,7 @@ def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict
                                 class_signal],axis=-1)
 
 
-        #Important win_lenth and step_size assumptions here
+        #TODO: Important win_lenth and step_size assumptions here
         in_cond,tacho=sliding_window_fragmentation([in_cond,tacho],
                             ((test_bsize-1)*step_s_avg+win_len_s_avg)*Fs_tacho,
                             step_s_avg*Fs_tacho)
@@ -741,6 +810,16 @@ def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict
                                                      axis=0).astype(bool)
         Dsplit_mask_dict['Dspecs']['key_order'].append(class_name)
         
+        # #TODO: For debugging
+        # def check_mask(mask,mask_hrv,show_plots=False):
+        #     if show_plots:
+        #         plt.figure();plt.plot(mask.astype(int))
+        #         plt.plot(mask_hrv.astype(int))
+        #     print(np.mean(mask),np.mean(mask_hrv))
+        #     return
+        # check_mask(Dsplit_mask_clipped[0],Dsplit_mask_hrv[0])
+        # check_mask(Dsplit_mask_clipped[1],Dsplit_mask_hrv[1])
+        
         #verify if dimensions match after processing
         assert Dsplit_mask_dict['hrv'][class_name].shape[1]==tacho.shape[0]
         #plt.figure();plt.plot(Dsplit_mask_hrv.T);plt.legend(['train','val','test'])
@@ -749,24 +828,24 @@ def get_clean_HR2R_data(files,win_len_s_avg,step_s_avg,Fs_tacho,Dsplit_mask_dict
         list_out.append(tacho.astype(np.float32))
 
         
-        # if ((mode=='test') or (mode=='test_common')):
-        #     # get selected test blocks
-        #     test_bsel_mask=Dsplit_mask_dict['hrv'][class_name][2]
-        #     start_idxs,end_idxs=get_continous_wins(test_bsel_mask.astype(int))
-        #     n_segments=len(start_idxs)
-        #     for arr_list in [list_in,list_out]:
-        #         arr_list[-1]=[arr_list[-1][start_idxs[j]:end_idxs[j]] 
-        #                       for j in range(n_segments)]
+        if ((mode=='test') or (mode=='test_common')):
+            # get selected test blocks
+            test_bsel_mask=Dsplit_mask_dict['hrv'][class_name][2]
+            start_idxs,end_idxs=get_continous_wins(test_bsel_mask.astype(int))
+            n_segments=len(start_idxs)
+            for arr_list in [list_in,list_out]:
+                arr_list[-1]=[arr_list[-1][start_idxs[j]:end_idxs[j]] 
+                              for j in range(n_segments)]
             
-            # test_bsel_idxs=np.arange(len(test_bsel_mask)
-            #                              )[test_bsel_mask.astype(bool)]
-            # for arr_list in [list_in,list_out]:
-            #     arr_list[-1]=[arr_list[-1][bidx:(bidx+1)] 
-            #                   for bidx in test_bsel_idxs]
+            test_bsel_idxs=np.arange(len(test_bsel_mask)
+                                          )[test_bsel_mask.astype(bool)]
+            for arr_list in [list_in,list_out]:
+                arr_list[-1]=[arr_list[-1][bidx:(bidx+1)] 
+                              for bidx in test_bsel_idxs]
     
     return list_in,list_out,Dsplit_mask_dict
     
-
+#%% For CG_Morph
 def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
                        mode='train',show_plots=False):
     '''
@@ -799,13 +878,15 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
         #Clean/filter signals
         acc_filt=acc_filter(acc,Fs_acc)
         ppg_filt=ppg_filter(ppg,Fs_ppg)
-        ecg=nk.ecg_clean(ecg.flatten(), sampling_rate=Fs_ecg, method="neurokit")
+        ecg_filt=nk.ecg_clean(ecg.flatten(),sampling_rate=Fs_ecg,method="neurokit")
+        #np.isfinite(ecg_filt).all()
+        ecg_filt=ecg_filter(ecg_filt.reshape(-1,1),Fs=Fs_ecg,show_plots=False)
         stres[stres>=5] = 0. #zero-out any meaningless label >=5
         
         #Resample at desired frequencies
         acc_resamp=resample(acc_filt,Fs_acc,25,32)
         ppg_resamp=resample(ppg_filt,Fs_ppg,25,64)
-        ecg_resamp=resample(ecg.reshape(-1,1),Fs_ecg,1,7)
+        ecg_resamp=resample(ecg_filt.reshape(-1,1),Fs_ecg,1,7)
         assert len(ecg_resamp)==factr*len(ppg_resamp), 'Check ppg and ecg resampling'
         
         acc,ppg,ecg=acc_resamp,ppg_resamp,ecg_resamp
@@ -888,9 +969,14 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
         #sel_mask_ppg=(sqi_mask_ppg & stres_mask_ppg).astype(np.float32).reshape(-1,1)
         sel_mask_ecg=np.ones_like(stres_mask_ecg).astype(np.float32).reshape(-1,1)
         sel_mask_ppg=sqi_mask_ppg.astype(np.float32).reshape(-1,1)
+        stres_mask_ecg=stres_mask_ecg.astype(np.float32).reshape(-1,1)
+        stres_mask_ppg=stres_mask_ppg.astype(np.float32).reshape(-1,1)
+        
         
         cond_ecg=np.concatenate([arr_pks_ecg,stres_signal_ecg,class_signal],axis=-1)
-        cond_ppg=np.concatenate([arr_pks_ppg,stres_signal_ppg,class_signal[::factr]],axis=-1)
+        cond_ppg=np.concatenate([arr_pks_ppg,stres_signal_ppg,
+                                 class_signal[::factr]],axis=-1)
+
         
         
         if show_plots:
@@ -915,7 +1001,7 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
         
         if form_Dsplit_mask_dict:
             #get Data split masks
-            Dsplit_mask_ppg=get_Dsplit_mask(sel_mask_ppg,win_len_s,step_size_s,
+            Dsplit_mask_ppg=get_Dsplit_mask(sel_mask_ppg,stres_mask_ppg,win_len_s,step_size_s,
                             Fs_ppg_new,test_ratio=test_ratio,test_block_size=test_bsize,
                             val_ratio=val_ratio,val_block_size=val_bsize,sel_thres=0.85)
             Dsplit_mask_dict['ppg'][class_name]=Dsplit_mask_ppg.astype(bool)
@@ -928,7 +1014,7 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
                                           .astype(bool).reshape(-1,1))
             test_sub_sel_mask=Dsplit_mask_ppg[2]
             
-            Dsplit_mask_ecg=get_Dsplit_mask(sel_mask_ecg,win_len_s,step_size_s,
+            Dsplit_mask_ecg=get_Dsplit_mask(sel_mask_ecg,stres_mask_ecg,win_len_s,step_size_s,
                             Fs_ecg_new,test_ratio=test_ratio,test_block_size=test_bsize,
                             val_ratio=val_ratio,val_block_size=val_bsize,sel_thres=0.85,
                             test_avail_sel_mask=test_avail_sel_mask,
@@ -939,6 +1025,12 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
                   f' ratio of windows from class {class_name}')
         
         Dsplit_mask_dict['Dspecs']['key_order'].append(class_name)
+        
+        #TODO: Chnaged here to remove stress condition for morph module
+        #remove stress column. Needed for Dsplit mask but not for morph model
+        
+        # cond_ecg=np.concatenate([cond_ecg[:,0:1],cond_ecg[:,6:]],axis=-1)
+        # cond_ppg=np.concatenate([cond_ppg[:,0:1],cond_ppg[:,6:]],axis=-1)
 
         cond_ppg,ppg=sliding_window_fragmentation([cond_ppg,ppg],
                                 win_len_s*Fs_ppg_new,step_size_s*Fs_ppg_new)
@@ -950,28 +1042,28 @@ def get_clean_R2S_data(files,win_len_s=8,step_size_s=2, Dsplit_mask_dict=None,
         input_dict['ecg']+=[cond_ecg.astype(np.float32)]
         output_dict['ecg']+=[ecg.astype(np.float32)]
         
-        # if mode=='test':
-        #     for k in ['ppg','ecg']:
-        #         # get selected test blocks
-        #         test_bsel_mask=get_windowed_mask(Dsplit_mask_dict[k]
-        #                     [class_name][2],win_len=test_bsize,step=test_bsize)
-        #         test_bsel_idxs=np.arange(len(test_bsel_mask)
-        #                                      )[test_bsel_mask.astype(bool)]
-        #         for arr_dict in [input_dict,output_dict]:
-        #             arr_dict[k][-1]=[arr_dict[k][-1]
-        #                                  [bidx*test_bsize:(bidx+1)*test_bsize] 
-        #                                  for bidx in test_bsel_idxs]
-        # elif mode=='test_common':
-        #     # get selected test blocks
-        #     test_bsel_mask=get_windowed_mask(Dsplit_mask_dict['ppg']
-        #                 [class_name][2],win_len=test_bsize,step=test_bsize)
-        #     test_bsel_idxs=np.arange(len(test_bsel_mask)
-        #                                  )[test_bsel_mask.astype(bool)]
-        #     for k in ['ppg','ecg']:
-        #         for arr_dict in [input_dict,output_dict]:
-        #             arr_dict[k][-1]=[arr_dict[k][-1]
-        #                                  [bidx*test_bsize:(bidx+1)*test_bsize] 
-        #                                  for bidx in test_bsel_idxs]
+        if mode=='test':
+            for k in ['ppg','ecg']:
+                # get selected test blocks
+                test_bsel_mask=get_windowed_mask(Dsplit_mask_dict[k]
+                            [class_name][2],win_len=test_bsize,step=test_bsize)
+                test_bsel_idxs=np.arange(len(test_bsel_mask)
+                                              )[test_bsel_mask.astype(bool)]
+                for arr_dict in [input_dict,output_dict]:
+                    arr_dict[k][-1]=[arr_dict[k][-1]
+                                          [bidx*test_bsize:(bidx+1)*test_bsize] 
+                                          for bidx in test_bsel_idxs]
+        elif mode=='test_common':
+            # get selected test blocks
+            test_bsel_mask=get_windowed_mask(Dsplit_mask_dict['ppg']
+                        [class_name][2],win_len=test_bsize,step=test_bsize)
+            test_bsel_idxs=np.arange(len(test_bsel_mask)
+                                          )[test_bsel_mask.astype(bool)]
+            for k in ['ppg','ecg']:
+                for arr_dict in [input_dict,output_dict]:
+                    arr_dict[k][-1]=[arr_dict[k][-1]
+                                          [bidx*test_bsize:(bidx+1)*test_bsize] 
+                                          for bidx in test_bsel_idxs]
     
     return input_dict,output_dict,musig_dict,Dsplit_mask_dict
 
@@ -1014,11 +1106,11 @@ def get_test_data(path,mode='HR2R',win_len_s=8,step_s=2,Fs_tacho=5,
     if mode=='HR2R':
         list_avgHRV,list_HRV,Dsplit_mask_dict=get_clean_HR2R_data(files,
                                         win_len_s,step_s,Fs_tacho,
-                                        Dsplit_mask_dict,mode='test_common')
+                                        Dsplit_mask_dict,mode='train')
         return list_avgHRV,list_HRV,Dsplit_mask_dict
     elif mode=='R2S':
         input_dict,output_dict,musig_dict,Dsplit_mask_dict=get_clean_R2S_data(
-                files,win_len_s,step_s,Dsplit_mask_dict,mode='test_common')
+                files,win_len_s,step_s,Dsplit_mask_dict,mode='train')
         
         # input_dict['ppg']=input_dict['ppg'][0]
         # input_dict['ecg']=input_dict['ecg'][0]

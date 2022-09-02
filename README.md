@@ -22,6 +22,10 @@ Morphological (Morph) information to the input R-peak train.
 
 Currently, the W-GAN in HR2Rpeaks_Simulator has a single set of weights while 
 the W-GAN in Rpeaks2Sig_Simulator has subject specific fine-tuned weights.
+Detailed instructions to reproduce evaluations and training of the paper are 
+inside CardioGen/README.md
+
+Code is functional but needs some refactoring to be more user-friendly.
 
 ## Example Notebooks
 * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SENSE-Lab-OSU/cardio_gen_model/blob/master/demo_augment_ppg.ipynb) 

@@ -20,6 +20,7 @@ from .utils import find_batch_size, make_data_pipe
 #from .networks_GAN import get_GAN_layers_default as get_GAN_layers
 from .networks_GAN import get_GAN_layers_conv as get_GAN_layers
 from .networks_GAN import downsample, upsample
+eps=1e-9 #smoothening wherever division by zero may occur in autograd
 
 tf.keras.backend.set_floatx('float32')
 tf_dtype=tf.float32
@@ -195,11 +196,12 @@ class Generator_pix2pix(Generator):
     def call(self,input_list,training=None,rnn_state=None,rnn_state_out_no=-1):
         z,x=input_list
         
-        # #Transform z to create correlated samples
-        # z = tf.expand_dims(z, axis=1) #insert a dummy dim to use conv2d
-        # for lay in self.z_up_layer_list:
-        #     z=lay(z,training=training)
-        # z = tf.squeeze(z, axis=1) #remove the dummy dim
+        #Transform z to create correlated samples
+        if len(self.z_up_layer_list)!=0:
+            z = tf.expand_dims(z, axis=1) #insert a dummy dim to use conv2d
+            for lay in self.z_up_layer_list:
+                z=lay(z,training=training)
+            z = tf.squeeze(z, axis=1) #remove the dummy dim
         
         #Append condition
         if self.use_x:
@@ -277,7 +279,7 @@ class Model_CondWGAN(tf.keras.Model):
                  save_flag=True,optimizers=None,aux_losses=None,
                  aux_losses_weights=None,in_shape=None,out_shape=None,
                  latent_size=10,mode='GAN',use_x=True, T_steps=5, n_classes=1,
-                 feat_loss_weight=0,Unet_reps=2):
+                 feat_loss_weight=0,Unet_reps=2,z_up_factor=1):
         '''
             Setting all the variables for our model.
         '''
@@ -287,7 +289,7 @@ class Model_CondWGAN(tf.keras.Model):
         self.mode=mode
         self.latent_size=latent_size
         self.use_x=use_x
-        self.z_up_factor=1
+        self.z_up_factor=z_up_factor
 
         
         self.n_dims_x=None
@@ -462,6 +464,7 @@ class Model_CondWGAN(tf.keras.Model):
             self.switch_loss(-1.)
             self.train_loss(cost)
             
+            
         self.update_D_switch()
         self.train_loss1(gen_loss)
         self.train_loss2(-disc_loss)
@@ -485,6 +488,7 @@ class Model_CondWGAN(tf.keras.Model):
             #cost = gen_loss# + 1e3*maml_loss
             
             cost=[gen_loss]
+            #print(f'At gen_loss={np.mean(~np.isnan(gen_loss.numpy()))}')
             if self.aux_losses is not None:
                 aux_loss=[self.aux_losses_weights[i]*
                           self.aux_losses[i](y, y_hat) 
@@ -492,12 +496,14 @@ class Model_CondWGAN(tf.keras.Model):
                 cost+=aux_loss
             cost = sum(cost)
             
+
             #No grad tracking needed for disc loss
             real_logits, real_out_list = self.disc([y,x], training=False, 
-                                                   return_all_out=True)
+                                                    return_all_out=True)
             feat_loss=sum([self.mse(real_out_list[i],fake_out_list[i]) 
-                           for i in range(len(fake_out_list))])
+                            for i in range(len(fake_out_list))])
             cost+=(self.feat_loss_weight*feat_loss)
+
             disc_loss = self.disc.loss(real_logits,fake_logits)
 
         grad = t.gradient(cost, self.gen.trainable_variables)
@@ -511,17 +517,26 @@ class Model_CondWGAN(tf.keras.Model):
         f_op4gp=lambda y_interp: self.disc([y_interp,x], training=True)
         with tf.GradientTape() as t:
             y_hat = self.gen([z,x], training=True)
+            #print(f'At y_hat={np.mean(~np.isnan(y_hat.numpy()))}')
+
             fake_logits = self.disc([y_hat,x], training=True)
+            #print(f'At fake_logits={np.mean(~np.isnan(fake_logits.numpy()))}')
+
             real_logits = self.disc([y,x], training=True)
             disc_loss = self.disc.loss(real_logits,fake_logits)
             gp = self.gradient_penalty(f_op4gp, y, y_hat)
             #print(type(disc_loss),type(gp))
             cost = disc_loss + self.grad_penalty_weight * gp
+            #print(f'At disc_loss={np.mean(~np.isnan(disc_loss.numpy()))}')
+
+            
             
         #No grad tracking needed for gen loss
         gen_loss = self.gen.loss(fake_logits)
         
         grad = t.gradient(cost, self.disc.trainable_variables)
+        #print(f'At grad={np.mean(np.array([np.mean(~np.isnan(grad[i].numpy())) for i in range(len(grad))]))}')
+
         self.disc.optimizer.apply_gradients(zip(grad, self.disc.trainable_variables))
         return gen_loss, disc_loss, cost
 
@@ -537,8 +552,9 @@ class Model_CondWGAN(tf.keras.Model):
             t.watch(inter)
             pred = f(inter)
         grad = t.gradient(pred, [inter])[0]
+        slopes = tf.reduce_sum(tf.square(grad), axis=list(range(1,n_dims)))
+        slopes=tf.sqrt(tf.maximum(slopes, eps))
         
-        slopes = tf.sqrt(tf.reduce_sum(tf.square(grad), axis=list(range(1,n_dims))))
         gp = tf.reduce_mean((slopes - 1.)**2)
         #print(gp.shape,gp)
         return gp
@@ -603,8 +619,8 @@ class Model_CondWGAN(tf.keras.Model):
                              ' net_Gen_loss: {}, Val_Loss: {},'
                         'Time used: {} \n')
             self.metrics_list = [self.train_loss1,self.train_loss2,
-                                 self.train_loss,self.test_loss,
-                                 self.switch_loss]
+                                 self.train_loss,self.test_loss]
+                                 #self.switch_loss]
         else:
             assert False, 'mode can only be GAN or GAN_recon\n'
             
@@ -630,7 +646,8 @@ class Model_CondWGAN(tf.keras.Model):
         
         print(self.n_dims_x,self.n_dims_y,self.batch_size_train,batch_size_val,'\n')
         train_ds=make_data_pipe(train,self.batch_size_train)
-        val_ds=make_data_pipe(val,batch_size_val,shuffle=False)
+        val_ds=make_data_pipe(val,batch_size_val,shuffle=False,
+                              drop_remainder=True)
         
         # Some logging utilities
         train_summary_writer, test_summary_writer=summaries
@@ -677,7 +694,7 @@ class Model_CondWGAN(tf.keras.Model):
 
             
             if self.mode=='GAN':
-                values=([int(self.ckpt.step)]+[m.result() for m in self.metrics_list[:-1]]
+                values=([int(self.ckpt.step)]+[m.result() for m in self.metrics_list]
                         +[time.time()-self.start])
                 print(self.template.format(*values))
                 

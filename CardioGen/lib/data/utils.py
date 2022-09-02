@@ -15,8 +15,6 @@ from tensorflow.keras import Model, layers
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 import scipy.signal as sig
 import scipy as sp
-from sklearn.metrics import confusion_matrix
-import pandas as pd
 
 eps=1e-7
 
@@ -47,149 +45,14 @@ def make_plot(z_hat,z,y,x_hat,x):
     plt.legend(['True Signal','Reconstructed Signal'])
     plt.title('Time domain Signal');plt.grid(True)
 
-def set_plot_font(SMALL_SIZE = 6,MEDIUM_SIZE = 9,BIGGER_SIZE = 10):
-    plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
-    plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-    plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-    plt.rc('axes', titlesize=MEDIUM_SIZE)     # fontsize of the axes title
-    plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
-    plt.rc('legend', fontsize=MEDIUM_SIZE)    # legend fontsize
-    plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
-    return
-    
 
-def make_x2xeval_plots(data,model,log_prefix,expid_list,label_list,
-                       confusion_keys,title,save_fig=True,
-                       marker_list=['-o','--o',':o']):
-    assert len(label_list)==len(marker_list),'len(label_list) must be = len(marker_list)'
-    #some settings of matplotlib backend
-    set_plot_font(8,9,10)
-    plt.rcParams['text.usetex'] = True
-
-    sig_test,y_test,HR_test=data
-    total_err_list,handle_list=[],[]
-    weights_path_prefix=log_prefix
-    main_exp_tag=expid_list[0].split("_")[0]
-    fig_dir=f'{weights_path_prefix}/figures'
-    table_dir=f'{weights_path_prefix}/tables/{main_exp_tag}'
-    os.makedirs(fig_dir,exist_ok=True)
-    os.makedirs(table_dir,exist_ok=True)
-
-    fig=plt.figure()
-    for k in range(len(expid_list)):
-        exp_sub_id=expid_list[k]
-        
-        #% Load HR model
-        #weights_path_prefix=glob.glob('../experiments/' + expid + '*')[0] #for latest experiment weights
-        weights_dir=weights_path_prefix+f'/{exp_sub_id}/checkpoints'
-        #weights_filepath_HR=weights_dir_HR+'/cp.ckpt'
-        latest_ckpt = tf.train.latest_checkpoint(weights_dir)
-        print('Loading model from ckpt {}'.format(latest_ckpt))
-        #infer_model_HR.load_weights(latest_ckpt)
-        model.load_weights(latest_ckpt)
-        #model_sl.evaluate(val_ds)
-        y_hat=model.predict(sig_test)
-        cm=confusion_matrix(np.argmax(y_test,axis=-1),
-                         np.argmax(y_hat,axis=-1),normalize=None)
-
-        df=pd.DataFrame(data=cm, index=confusion_keys, 
-                        columns=confusion_keys, dtype=None)
-        df.to_csv(f'{table_dir}/{exp_sub_id}.csv',float_format='%.3f')
-        check_test=(np.argmax(y_test,axis=-1)==np.argmax(y_hat,axis=-1))
-        acc_test=np.mean(check_test.astype(int))
-        print(acc_test*100)
-        
-        # Do binning and check plots
-        err=np.invert(check_test).astype(int)
-        n_bins = 10
-        
-        #TODO: Bins will be same as long as all_tacho, n_bins same
-        #_,eqbins=pd.cut(1000*HR_test,n_bins,labels=False,retbins=True)
-        #eqbins=np.round(eqbins,-1).astype(int)
-        cuts,bins=pd.qcut(1000*HR_test,n_bins,labels=False,retbins=True)
-
-        bin_err=np.zeros(n_bins)
-        for i in range(n_bins):
-            print(len(err[cuts==i]))
-            bin_err[i]=np.mean(err[cuts==i])*100
     
-    
-        #width = 0.9 * (bins[1] - bins[0])
-        #print(bin_err)
-        center = (bins[:-1] + bins[1:]) / 2
-        han,=plt.plot(center, bin_err,marker_list[k],label=label_list[k])
-        
-        total_err_list.append(np.mean(err))
-        handle_list.append(han)
-    plt.xlabel('Average RR ($ms$.)')
-    plt.ylabel('Classification Error ($\%$)')
-    plt.suptitle(title)
-    #plt.gca().set_xscale('log',basex=10)
-    #plt.yscale('log',base=10)
-    plt.legend()#loc='upper right')
-    plt.grid(True)
-    #plt.ylim(bottom=0)
-    #plt.xticks(eqbins,[f'{b:.0f}' for b in eqbins])
-    
-    print(total_err_list)
-    print(((total_err_list[0]-total_err_list[-1])/
-          total_err_list[0])*100)
-    
-    fig.tight_layout()
-    if save_fig:
-        # Best for professional typesetting, e.g. LaTeX
-        #plt.savefig(f'{fig_dir}/{expid_list[-1]}_eqbins_notrain.pdf')
-        plt.savefig(f'{fig_dir}/{main_exp_tag}.png',dpi=300)
-    
-    # #Plot training data size in each bin
-    # # Load train_data if it doesn't exist
-    # try:
-    #     train_HR=60*HR_train
-    # except NameError:
-    #     d_list=load_data_helper(Dsplit_mask_dict,musig_dict,data_path,win_len_s,
-    #                             step_s,bsize,bstep,ecg_win_len,Fs_new,augmentor,
-    #                             seq_format_function_E2St,dsampling_factor_aug=1)
-    #     val_data,train_data,_,_,misc_list=d_list
-    #     Dsplit_mask_dict,HR_train=misc_list
-    #     train_HR=60*HR_train
-            
-    # # available training data in every bin
-    # train_HR=train_HR.flatten()
-    
-    # train_cuts,train_bins=pd.cut(train_HR,bins=bins,labels=False,retbins=True)
-    # assert train_bins.all()==bins.all()
-    
-    # bin_n_train=np.zeros(n_bins)
-    # for i in range(n_bins):
-    #     bin_n_train[i]=100*(np.mean((train_cuts==i).astype(int)))
-        
-    # plt.grid(True) #first axis grid
-    # ax = plt.gca()    # Get current axis
-    # ax2 = ax.twinx()  # make twin axis based on x
-    # #plot
-    # tdata,=ax2.plot(center, bin_n_train,'r--x',label='train_data %')
-    # ax2.set_ylabel("Training Data %")
-    # handle_list.append(tdata)
-    # plt.grid(True) #second axis grid
-    
-    # #TODO: legend on ax vs ax2
-    # ax2.legend(handles=handle_list,loc='best')
-    # ax2.yaxis.label.set_color(tdata.get_color())
-    # # Adjust spacings w.r.t. figsize
-    # fig.tight_layout()
-    
-    # # Best for professional typesetting, e.g. LaTeX
-    # plt.savefig(f'{fig_dir}/{expid_list[-1]}_eqbins.pdf')
-    # plt.savefig(f'{fig_dir}/{expid_list[-1]}_eqbins.png',dpi=300)
-    
-    return fig
-
-def make_data_pipe(data,batch_size=64,shuffle=True,drop_remainder=True):
+def make_data_pipe(data,batch_size=64,shuffle=True):
     #dataset = tf.data.Dataset.from_tensor_slices((data[0],data[1],data[2]))
     dataset = tf.data.Dataset.from_tensor_slices(tuple(data))
     if shuffle:
         dataset=dataset.shuffle(buffer_size=np.max([6*batch_size,1000]).astype(int))
-    dataset=dataset.batch(batch_size,drop_remainder=drop_remainder).prefetch(AUTOTUNE)
+    dataset=dataset.batch(batch_size,drop_remainder=True).prefetch(AUTOTUNE)
     return dataset
 
 
